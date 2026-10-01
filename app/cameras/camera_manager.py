@@ -26,7 +26,9 @@ class CameraManager:
         self._cameras: dict[str, CameraDevice] = {}
         self._workers: dict[str, AcquisitionWorker] = {}
         self._display_queues: dict[str, LatestFrameQueue] = {}
-        self._errors: dict[str, str] = {}
+        self._errors: dict[str, Exception] = {}
+        # Cameras the user asked to stream (survives worker failure; used by auto-reconnect).
+        self._wanted_streaming: set[str] = set()
         # Kept here (not only on the worker) so recording survives stream restarts.
         self._recording_queues: dict[str, RecordingQueue] = {}
 
@@ -69,6 +71,7 @@ class CameraManager:
     def start_streaming(self, camera_id: str) -> None:
         camera = self.camera(camera_id)
         with self._lock:
+            self._wanted_streaming.add(camera_id)
             worker = self._workers.get(camera_id)
             if worker is not None and worker.running:
                 return
@@ -87,9 +90,32 @@ class CameraManager:
 
     def stop_streaming(self, camera_id: str) -> None:
         with self._lock:
+            self._wanted_streaming.discard(camera_id)
             worker = self._workers.pop(camera_id, None)
         if worker is not None:
             worker.stop()
+
+    def reconnect(self, camera_id: str) -> None:
+        """Re-open a camera after a failure and resume streaming if it was streaming.
+
+        Raises CameraError if the camera is still unavailable; state stays ERROR in that case.
+        """
+        camera = self.camera(camera_id)
+        with self._lock:
+            resume = camera_id in self._wanted_streaming
+            worker = self._workers.pop(camera_id, None)
+        if worker is not None:
+            worker.stop()
+        try:
+            camera.disconnect()  # release a stale handle
+        except CameraError as exc:
+            logger.debug("Cleanup before reconnecting %s: %s", camera_id, exc)
+        camera.connect()
+        with self._lock:
+            self._errors.pop(camera_id, None)
+        logger.info("Reconnected %s", camera_id)
+        if resume:
+            self.start_streaming(camera_id)
 
     def set_recording_queue(self, camera_id: str, recording_queue: RecordingQueue | None) -> None:
         """Route frames from ``camera_id`` into ``recording_queue`` (None to detach).
@@ -142,8 +168,17 @@ class CameraManager:
 
     def last_error(self, camera_id: str) -> str | None:
         with self._lock:
+            exc = self._errors.get(camera_id)
+        return None if exc is None else (str(exc) or type(exc).__name__)
+
+    def last_exception(self, camera_id: str) -> Exception | None:
+        with self._lock:
             return self._errors.get(camera_id)
+
+    def wants_streaming(self, camera_id: str) -> bool:
+        with self._lock:
+            return camera_id in self._wanted_streaming
 
     def _on_worker_error(self, camera_id: str, exc: Exception) -> None:
         with self._lock:
-            self._errors[camera_id] = str(exc) or type(exc).__name__
+            self._errors[camera_id] = exc

@@ -298,3 +298,28 @@ def test_streams_through_camera_manager(sdk):
     assert manager.state(cam.camera_id) is CameraState.ERROR
     assert "lost" in manager.last_error(cam.camera_id)
     manager.shutdown()
+
+
+def test_arena_camera_auto_reconnects_after_cable_pull(sdk):
+    from app.services.reconnect_service import ReconnectService
+
+    cam = ArenaCamera(ArenaDeviceInfo.from_sdk(fake_arena.device_info()))
+    manager = CameraManager(frame_timeout=0.05)
+    manager.add_camera(cam)
+    manager.connect(cam.camera_id)
+    manager.start_streaming(cam.camera_id)
+    old_device = device_of(sdk)
+    old_device.connected = False  # cable pulled
+    deadline = time.monotonic() + 2
+    while manager.state(cam.camera_id) is not CameraState.ERROR and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert manager.state(cam.camera_id) is CameraState.ERROR
+
+    sdk.system.devices.clear()  # cable back in: the SDK hands out a fresh device handle
+    service = ReconnectService(manager, initial_delay=0.0, poll_interval=0.02)
+    service.poll_once()
+    assert manager.state(cam.camera_id) is CameraState.ACQUIRING
+    assert old_device in sdk.system.destroyed  # stale handle released
+    new_device = device_of(sdk)
+    assert new_device is not old_device and new_device.streaming
+    manager.shutdown()
