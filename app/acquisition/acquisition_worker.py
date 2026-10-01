@@ -22,6 +22,8 @@ class AcquisitionStats:
     frames_acquired: int = 0
     timeouts: int = 0
     measured_fps: float = 0.0
+    throughput_mb_s: float = 0.0  # image data delivered to the app, MB/s (1 MB = 1e6 bytes)
+    frames_missed: int = 0  # frame-id gaps: frames the camera produced that never arrived
     last_frame_id: int | None = None
     error: str | None = None
 
@@ -90,6 +92,8 @@ class AcquisitionWorker:
 
         window_start = time.perf_counter()
         window_frames = 0
+        window_bytes = 0
+        last_id: int | None = None
         try:
             while not self._stop_event.is_set():
                 try:
@@ -105,19 +109,25 @@ class AcquisitionWorker:
                 if recording_queue is not None:
                     recording_queue.put(frame)
 
+                missed = frame.frame_id - last_id - 1 if last_id is not None and frame.frame_id > last_id + 1 else 0
+                last_id = frame.frame_id
                 window_frames += 1
+                window_bytes += frame.data.nbytes
                 now = time.perf_counter()
                 elapsed = now - window_start
                 with self._stats_lock:
-                    fps = self._stats.measured_fps
+                    fps, throughput = self._stats.measured_fps, self._stats.throughput_mb_s
                     if elapsed >= FPS_WINDOW_S:
                         fps = window_frames / elapsed
-                        window_start, window_frames = now, 0
+                        throughput = window_bytes / elapsed / 1e6
+                        window_start, window_frames, window_bytes = now, 0, 0
                     self._stats = replace(
                         self._stats,
                         frames_acquired=self._stats.frames_acquired + 1,
+                        frames_missed=self._stats.frames_missed + missed,
                         last_frame_id=frame.frame_id,
                         measured_fps=fps,
+                        throughput_mb_s=throughput,
                     )
         except Exception as exc:  # noqa: BLE001 - reported, never crashes the app
             self._fail(exc)
