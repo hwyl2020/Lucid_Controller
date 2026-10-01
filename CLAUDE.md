@@ -43,6 +43,14 @@ Dear PyGui UI → Application Services → CameraManager → CameraDevice (inter
 - All Arena-specific code stays in `app/cameras/arena_camera.py` and the related discovery code.
 - `CameraDevice` is the shared interface between the two developers' areas of work (camera engine and UI). Change it only on purpose, and document the change.
 
+### `CameraDevice` conventions (`app/cameras/camera_device.py`)
+
+- **Units:** exposure in µs (matches GenICam `ExposureTime`), gain in dB, frame rate in Hz.
+- **Capability queries** (`exposure_range()`, `gain_range()`, `frame_rate_range()`, `pixel_formats()`, `roi_limits()`) return `None` or `[]` when the feature is unsupported. Values are validated with `NumericRange.validate` / `RoiLimits.validate`, including increments.
+- **Errors:** all expected failures raise a `CameraError` subclass (`CameraNotConnectedError`, `CameraDisconnectedError`, `FrameTimeoutError`, `InvalidValueError`, `InvalidStateError`, `UnsupportedFeatureError`). `ArenaCamera` must translate SDK exceptions into these.
+- **Locked while acquiring:** `set_pixel_format` and `set_roi` raise `InvalidStateError` during acquisition, as real GenICam nodes do.
+- **`get_frame(timeout)`** is only called from the acquisition worker thread.
+
 ### Camera implementations
 
 - `ArenaCamera` is the production backend. It handles init, discovery, connect/disconnect, stream setup, buffer requeueing, node access and cleanup.
@@ -56,6 +64,9 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 ```
 
 - Never call blocking acquisition (e.g. a buffer wait) from the Dear PyGui render loop.
+- The UI uses only `CameraManager`:
+  - `latest_frame(id)`, `state(id)`, `stats(id)` and `last_error(id)` are cheap, so they can be polled every render frame.
+  - Worker errors never raise into the UI. They show up as `CameraState.ERROR` plus `last_error()`.
 - Frames cross layers as the app-level `Frame` model (`camera_id, frame_id, timestamp, width, height, pixel_format, data` as a NumPy array). Never pass Arena buffer objects upward. Copy the data out and requeue the buffer inside the backend.
 - Queue policy, bounded in both cases:
   - **Display:** newest frame wins, and old frames may be dropped.
