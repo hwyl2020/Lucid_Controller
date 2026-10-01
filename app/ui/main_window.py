@@ -6,12 +6,14 @@ import dearpygui.dearpygui as dpg
 
 from app.cameras.camera_manager import CameraManager
 from app.models.camera_state import CameraState
+from app.services.camera_control_service import CameraControlService
+from app.ui.camera_controls import CameraControlsPanel
 from app.ui.camera_sidebar import CameraSidebar
 from app.ui.multiview import MultiView
 from app.ui.theme import STATE_COLORS, TEXT_DIM, create_theme, load_font
 
 APP_TITLE = "LUCID Camera Studio"
-SIDEBAR_WIDTH = 260
+SIDEBAR_WIDTH = 300
 HEADER_HEIGHT = 40
 STATUS_HEIGHT = 32
 
@@ -31,6 +33,9 @@ class MainWindow:
             with dpg.group(horizontal=True):
                 with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8) as sidebar:
                     self._sidebar = CameraSidebar(sidebar, manager)
+                    self._controls = CameraControlsPanel(
+                        sidebar, manager, CameraControlService(manager), wrap=SIDEBAR_WIDTH - 30
+                    )
                 with dpg.child_window(width=-1, height=-STATUS_HEIGHT - 8, no_scrollbar=True) as area:
                     self._multiview = MultiView(area, manager, app_cfg["default_layout"])
 
@@ -44,6 +49,7 @@ class MainWindow:
     def update(self) -> None:
         """Called once per rendered frame from the UI thread."""
         self._sidebar.update()
+        self._controls.update(self._sidebar.selected)
         self._multiview.update()
 
         camera_ids = self._manager.camera_ids

@@ -53,7 +53,6 @@ FONT_CANDIDATES = (
     Path("/System/Library/Fonts/SFNS.ttf"),
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
 )
-STATE_DOT = 0x25CF
 
 
 def load_font(size: int = 16) -> None:
@@ -62,10 +61,9 @@ def load_font(size: int = 16) -> None:
     if path is None:
         logger.warning("No UI font found; using Dear PyGui default (state dots may render as '?')")
         return
+    # Dear PyGui 2.x loads glyph ranges automatically (font range hints are deprecated no-ops).
     with dpg.font_registry():
-        with dpg.font(str(path), size) as font:
-            dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
-            dpg.add_font_range(STATE_DOT, STATE_DOT)
+        font = dpg.add_font(str(path), size)
     dpg.bind_font(font)
 
 

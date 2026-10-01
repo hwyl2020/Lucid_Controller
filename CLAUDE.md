@@ -81,7 +81,11 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 ```
 
 - Never call blocking acquisition (e.g. a buffer wait) from the Dear PyGui render loop.
-- The UI uses only `CameraManager`:
+- **Settings changes** go through `app/services/camera_control_service.py` (`CameraControlService`):
+  - `snapshot()` reads values and capabilities. It touches the device, so call it on selection, after a change, or every 2 s, never every frame.
+  - The setters clamp and snap values with `NumericRange.clamp` / `RoiLimits.clamp`, and return the value actually applied.
+  - Pixel-format and ROI changes stop the stream, apply, then restart it, so the UI doesn't need to know about the acquiring lock.
+- The UI uses only `CameraManager` (and the control service for settings):
   - `latest_frame(id)`, `state(id)`, `stats(id)` and `last_error(id)` are cheap, so they can be polled every render frame.
   - Worker errors never raise into the UI. They show up as `CameraState.ERROR` plus `last_error()`.
 - Frames cross layers as the app-level `Frame` model (`camera_id, frame_id, timestamp, width, height, pixel_format, data` as a NumPy array). Never pass Arena buffer objects upward. Copy the data out and requeue the buffer inside the backend.
@@ -96,7 +100,10 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - Textures are sized to the tile, rounded up to one of the `TEXTURE_SIDES` sizes.
 - **Performance:** allocating a new float buffer per frame cost about 18 ms per tile. Reusing the buffer (`out=`) and sizing textures to the tile took four 720p simulators from 13 to 39 render FPS. Keep both.
 - **Bayer:** `processing.py` has no display conversion for Bayer. `ArenaCamera` already delivers RGB8 via the SDK, and doing it in OpenCV risks a wrong Bayer-phase mapping.
-- **Fonts:** Dear PyGui's default font has no `●` glyph, so `theme.load_font()` loads Segoe UI.
+- **Fonts:** Dear PyGui's default font has no `●` glyph, so `theme.load_font()` loads Segoe UI. Glyph ranges are automatic in DPG 2.x; `add_font_range*` is a deprecated no-op.
+- **`CameraControlsPanel`** (sidebar): controls are enabled or disabled from the snapshot's capabilities, and it never refreshes a field the user is editing (`dpg.is_item_active`).
+- **GIL contention:** with 4 simulators and a fast UI loop, the simulators drop to about 24 FPS because they share the GIL with the render loop (they spend CPU drawing test patterns). Measure real-camera throughput before optimising; if needed, move display conversion off the UI thread or into worker processes.
+- **Headless screenshots:** `dpg.output_frame_buffer()` can occasionally capture an all-black frame if the window is occluded. Re-run before concluding that rendering broke.
 
 ### Capability-driven GenICam
 

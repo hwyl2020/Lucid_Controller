@@ -67,6 +67,15 @@ class NumericRange:
                     f"{name} {value} must be {self.minimum} + n * {self.increment}"
                 )
 
+    def clamp(self, value: float) -> float:
+        """Nearest valid value: clamped to the range and snapped to the increment."""
+        value = min(max(value, self.minimum), self.maximum)
+        if self.increment:
+            value = self.minimum + round((value - self.minimum) / self.increment) * self.increment
+            if value > self.maximum:
+                value -= self.increment
+        return value
+
 
 @dataclass(frozen=True)
 class Roi:
@@ -95,6 +104,19 @@ class RoiLimits:
         _check_axis("height", roi.height, self.min_height, self.sensor_height, self.height_increment)
         _check_axis("offset x", roi.x, 0, self.sensor_width - roi.width, self.offset_x_increment)
         _check_axis("offset y", roi.y, 0, self.sensor_height - roi.height, self.offset_y_increment)
+
+    def clamp(self, roi: Roi) -> Roi:
+        """Largest valid ROI not exceeding the request: sizes first, then offsets that still fit."""
+        width = _snap_down(roi.width, self.min_width, self.sensor_width, self.width_increment)
+        height = _snap_down(roi.height, self.min_height, self.sensor_height, self.height_increment)
+        x = _snap_down(roi.x, 0, self.sensor_width - width, self.offset_x_increment)
+        y = _snap_down(roi.y, 0, self.sensor_height - height, self.offset_y_increment)
+        return Roi(x, y, width, height)
+
+
+def _snap_down(value: int, minimum: int, maximum: int, increment: int) -> int:
+    value = min(max(int(value), minimum), maximum)
+    return minimum + (value - minimum) // increment * increment
 
 
 def _check_axis(name: str, value: int, minimum: int, maximum: int, increment: int) -> None:
