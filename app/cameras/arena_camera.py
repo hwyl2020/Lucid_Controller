@@ -37,6 +37,7 @@ from app.cameras.camera_device import (
     UnsupportedFeatureError,
 )
 from app.cameras.camera_discovery import ArenaDeviceInfo
+from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +316,65 @@ class ArenaCamera(CameraDevice):
             if y:
                 self._write(nodemap, "OffsetY", int(y))
 
+    # --- generic feature access (Property Grid) ----------------------------
+    def feature_tree(self) -> FeatureCategory | None:
+        """Walk the device node map from its ``Root`` category (GenICam), reading every feature."""
+        with self._lock:
+            device = self._require_device()
+            root = self._node(device.nodemap, "Root")
+            if root is None:
+                return None
+            return self._category(root, depth=0)
+
+    def write_feature(self, name: str, value: object) -> None:
+        with self._lock:
+            device = self._require_device()
+            node = self._node(device.nodemap, name)
+            if node is None:
+                raise UnsupportedFeatureError(f"{self.camera_id}: feature {name} not present")
+            kind = node.interface_type.name
+            if not node.is_writable:
+                hint = " (stop acquisition to change it)" if self._acquiring else ""
+                raise InvalidStateError(f"{name} is read-only in the camera's current state{hint}")
+            converted = _convert_for_node(node, kind, value, name)
+            try:
+                node.value = converted
+            except Exception as exc:  # noqa: BLE001
+                raise self._translate(exc, f"set {name}={converted!r}") from exc
+
+    def execute_feature(self, name: str) -> None:
+        with self._lock:
+            device = self._require_device()
+            node = self._node(device.nodemap, name)
+            if node is None or node.interface_type.name != "COMMAND":
+                raise UnsupportedFeatureError(f"{self.camera_id}: command {name} not present")
+            if not node.is_writable:
+                raise InvalidStateError(f"{name} cannot be executed in the camera's current state")
+            try:
+                node.execute()
+            except Exception as exc:  # noqa: BLE001
+                raise self._translate(exc, f"execute {name}") from exc
+
+    def _category(self, node, depth: int) -> FeatureCategory:
+        features: list[Feature] = []
+        subcategories: list[FeatureCategory] = []
+        try:
+            children = node.features
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("%s: cannot list category %s: %s", self.camera_id, node.name, _short(exc))
+            children = {}
+        for child in children.values():
+            try:
+                kind = child.interface_type.name
+            except Exception:  # noqa: BLE001
+                continue
+            if kind == "CATEGORY":
+                if depth < MAX_CATEGORY_DEPTH:
+                    subcategories.append(self._category(child, depth + 1))
+            elif kind in _FEATURE_KINDS:
+                features.append(_feature_from_node(child, kind))
+        return FeatureCategory(node.name, _display_name(node), tuple(features), tuple(subcategories))
+
     # --- frame extraction -------------------------------------------------
     def _extract(self, buffer) -> tuple[np.ndarray, str]:
         name = buffer.pixel_format.name
@@ -495,3 +555,79 @@ def _short(exc: BaseException, limit: int = 240) -> str:
     """Arena error messages are multi-line banners; collapse to one line."""
     text = " ".join(str(exc).split()) or type(exc).__name__
     return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+# --- GenICam node -> app Feature ------------------------------------------------
+MAX_CATEGORY_DEPTH = 8
+_FEATURE_KINDS = {
+    "INTEGER": FeatureKind.INTEGER,
+    "FLOAT": FeatureKind.FLOAT,
+    "BOOLEAN": FeatureKind.BOOLEAN,
+    "ENUMERATION": FeatureKind.ENUMERATION,
+    "STRING": FeatureKind.STRING,
+    "COMMAND": FeatureKind.COMMAND,
+    "REGISTER": FeatureKind.REGISTER,
+}
+_VISIBILITY = {v.name: v for v in Visibility}
+
+
+def _display_name(node) -> str:
+    try:
+        return node.display_name or node.name
+    except Exception:  # noqa: BLE001
+        return node.name
+
+
+def _feature_from_node(node, kind_name: str) -> Feature:
+    """Read one node into a Feature; failures are recorded on the feature, never raised."""
+    kind = _FEATURE_KINDS[kind_name]
+    fields: dict = {}
+    error = None
+    try:
+        access = node.access_mode.name
+        access = access if access in ("RW", "RO", "WO", "NA", "NI") else "NA"
+        fields["visibility"] = _VISIBILITY.get(node.visibility.name, Visibility.BEGINNER)
+        try:
+            fields["description"] = (node.tool_tip or node.description or "").strip()
+        except Exception:  # noqa: BLE001
+            fields["description"] = ""
+        if access in ("RO", "RW") and kind not in (FeatureKind.COMMAND, FeatureKind.REGISTER):
+            fields["value"] = node.value
+            if kind in (FeatureKind.INTEGER, FeatureKind.FLOAT):
+                fields["minimum"], fields["maximum"] = node.min, node.max
+                fields["increment"] = node.inc
+                try:
+                    fields["unit"] = node.unit or ""
+                except Exception:  # noqa: BLE001
+                    fields["unit"] = ""
+            elif kind is FeatureKind.ENUMERATION:
+                fields["entries"] = tuple(n for n, e in node.enumentry_nodes.items() if e.is_readable)
+    except Exception as exc:  # noqa: BLE001 - one bad node must not break the grid
+        error = _short(exc)
+        access = locals().get("access", "NA")
+    return Feature(name=node.name, display_name=_display_name(node), kind=kind, access=access, error=error, **fields)
+
+
+def _convert_for_node(node, kind_name: str, value: object, name: str):
+    """Validate/convert a UI value against the node's live limits before writing."""
+    try:
+        if kind_name == "INTEGER":
+            number = int(value)
+            NumericRange(node.min, node.max, node.inc or None).validate(number, name)
+            return number
+        if kind_name == "FLOAT":
+            number = float(value)
+            NumericRange(node.min, node.max).validate(number, name)
+            return number
+        if kind_name == "BOOLEAN":
+            return bool(value)
+        if kind_name == "ENUMERATION":
+            available = [n for n, e in node.enumentry_nodes.items() if e.is_readable]
+            if str(value) not in available:
+                raise InvalidValueError(f"{name}: {value!r} is not one of {available}")
+            return str(value)
+        if kind_name == "STRING":
+            return str(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidValueError(f"{name}: invalid value {value!r} ({exc})") from exc
+    raise UnsupportedFeatureError(f"{name}: {kind_name.lower()} features cannot be written here")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -20,7 +21,11 @@ from app.cameras.camera_device import (
     NumericRange,
     Roi,
     RoiLimits,
+    UnsupportedFeatureError,
 )
+from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
+
+logger = logging.getLogger(__name__)
 
 PATTERNS = ("moving_bar", "gradient", "checkerboard", "noise")
 PIXEL_FORMATS = ("Mono8", "RGB8")
@@ -75,6 +80,8 @@ class SimulatorCamera(CameraDevice):
         self._frame_id = 0
         self._next_due = 0.0
         self._rng = np.random.default_rng()
+        self._user_id = ""
+        self._software_triggers = 0
         self._base = self._make_base_pattern()
 
     # --- identity / state -------------------------------------------------
@@ -238,6 +245,90 @@ class SimulatorCamera(CameraDevice):
             self._require_connected()
             self._require_not_acquiring("ROI")
             self._roi = roi
+
+    # --- generic feature access (Property Grid) ----------------------------
+    # A small, honest feature set mapped onto the simulator's real settings, using standard SFNC
+    # names, so the Property Grid can be exercised without hardware.
+    def feature_tree(self) -> FeatureCategory | None:
+        with self._lock:
+            self._require_connected()
+            locked = "RO" if self._acquiring else "RW"  # format/ROI lock while acquiring, as on cameras
+            roi, limits = self._roi, self._roi_limits
+            e, g, f = self.EXPOSURE_RANGE, self.GAIN_RANGE, self.FRAME_RATE_RANGE
+            device = FeatureCategory("DeviceControl", "Device Control", (
+                Feature("DeviceVendorName", "Vendor Name", FeatureKind.STRING, "RO", value="Simulator"),
+                Feature("DeviceModelName", "Model Name", FeatureKind.STRING, "RO", value=self.model),
+                Feature("DeviceSerialNumber", "Serial Number", FeatureKind.STRING, "RO", value=self.serial_number),
+                Feature("DeviceUserID", "User ID", FeatureKind.STRING, "RW", value=self._user_id,
+                        description="User-defined name (max 16 characters)"),
+            ))
+            acquisition = FeatureCategory("AcquisitionControl", "Acquisition Control", (
+                Feature("AcquisitionMode", "Acquisition Mode", FeatureKind.ENUMERATION, "RO", value="Continuous",
+                        entries=("Continuous",)),
+                Feature("AcquisitionFrameRate", "Acquisition Frame Rate", FeatureKind.FLOAT, "RW", value=self._fps,
+                        minimum=f.minimum, maximum=f.maximum, unit="Hz"),
+                Feature("ExposureTime", "Exposure Time", FeatureKind.FLOAT, "RW", value=self._exposure,
+                        minimum=e.minimum, maximum=e.maximum, unit="us"),
+                Feature("TriggerSoftware", "Trigger Software", FeatureKind.COMMAND, "WO", Visibility.EXPERT,
+                        description="Simulator: counts software triggers"),
+            ))
+            image = FeatureCategory("ImageFormatControl", "Image Format Control", (
+                Feature("PixelFormat", "Pixel Format", FeatureKind.ENUMERATION, locked, value=self._pixel_format,
+                        entries=PIXEL_FORMATS),
+                Feature("Width", "Width", FeatureKind.INTEGER, locked, value=roi.width, minimum=limits.min_width,
+                        maximum=limits.sensor_width - roi.x, increment=limits.width_increment),
+                Feature("Height", "Height", FeatureKind.INTEGER, locked, value=roi.height, minimum=limits.min_height,
+                        maximum=limits.sensor_height - roi.y, increment=limits.height_increment),
+                Feature("OffsetX", "Offset X", FeatureKind.INTEGER, locked, value=roi.x, minimum=0,
+                        maximum=limits.sensor_width - roi.width, increment=limits.offset_x_increment),
+                Feature("OffsetY", "Offset Y", FeatureKind.INTEGER, locked, value=roi.y, minimum=0,
+                        maximum=limits.sensor_height - roi.height, increment=limits.offset_y_increment),
+                Feature("SensorWidth", "Sensor Width", FeatureKind.INTEGER, "RO", Visibility.EXPERT,
+                        value=limits.sensor_width),
+                Feature("SensorHeight", "Sensor Height", FeatureKind.INTEGER, "RO", Visibility.EXPERT,
+                        value=limits.sensor_height),
+            ))
+            analog = FeatureCategory("AnalogControl", "Analog Control", (
+                Feature("Gain", "Gain", FeatureKind.FLOAT, "RW", value=self._gain, minimum=g.minimum,
+                        maximum=g.maximum, unit="dB"),
+            ))
+            return FeatureCategory("Root", "Root", (), (device, acquisition, image, analog))
+
+    def write_feature(self, name: str, value: object) -> None:
+        roi = self._roi
+        setters = {
+            "AcquisitionFrameRate": lambda v: self.set_frame_rate(float(v)),
+            "ExposureTime": lambda v: self.set_exposure(float(v)),
+            "Gain": lambda v: self.set_gain(float(v)),
+            "PixelFormat": lambda v: self.set_pixel_format(str(v)),
+            "Width": lambda v: self.set_roi(roi.x, roi.y, int(v), roi.height),
+            "Height": lambda v: self.set_roi(roi.x, roi.y, roi.width, int(v)),
+            "OffsetX": lambda v: self.set_roi(int(v), roi.y, roi.width, roi.height),
+            "OffsetY": lambda v: self.set_roi(roi.x, int(v), roi.width, roi.height),
+            "DeviceUserID": self._set_user_id,
+        }
+        if name not in setters:
+            raise UnsupportedFeatureError(f"{name} is read-only or not present on the simulator")
+        try:
+            setters[name](value)
+        except (TypeError, ValueError) as exc:
+            raise InvalidValueError(f"{name}: invalid value {value!r}") from exc
+
+    def execute_feature(self, name: str) -> None:
+        if name != "TriggerSoftware":
+            raise UnsupportedFeatureError(f"command {name} not present on the simulator")
+        with self._lock:
+            self._require_connected()
+            self._software_triggers += 1
+        logger.info("%s: TriggerSoftware executed (%d)", self.camera_id, self._software_triggers)
+
+    def _set_user_id(self, value: object) -> None:
+        text = str(value)
+        if len(text) > 16:
+            raise InvalidValueError("DeviceUserID: at most 16 characters")
+        with self._lock:
+            self._require_connected()
+            self._user_id = text
 
     # --- internals --------------------------------------------------------
     def _require_connected(self) -> None:

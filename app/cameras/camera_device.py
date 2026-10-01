@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from app.acquisition.frame import Frame
+from app.models.features import FeatureCategory
 
 
 class CameraError(Exception):
@@ -228,3 +229,20 @@ class CameraDevice(ABC):
     @abstractmethod
     def set_roi(self, x: int, y: int, width: int, height: int) -> None:
         """Raises InvalidStateError while acquiring."""
+
+    # --- generic feature access (Property Grid) ----------------------------
+    # Optional: backends without a browsable feature tree keep these defaults.
+    def feature_tree(self) -> FeatureCategory | None:
+        """Snapshot of all features (values included) grouped by category; None if unsupported.
+
+        May take a while on real cameras (one read per node); call off the UI thread.
+        """
+        return None
+
+    def write_feature(self, name: str, value: object) -> None:
+        """Write a feature by name. Raises UnsupportedFeatureError, InvalidValueError, CameraError."""
+        raise UnsupportedFeatureError(f"{self.camera_id}: feature access not supported")
+
+    def execute_feature(self, name: str) -> None:
+        """Execute a command feature by name."""
+        raise UnsupportedFeatureError(f"{self.camera_id}: feature access not supported")
