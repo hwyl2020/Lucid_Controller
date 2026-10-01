@@ -132,6 +132,21 @@ class FakeSystem:
     def destroy_device(self, device=None):
         self.destroyed.append(device)
 
+    # Host adapters (system.interface_infos) and GigE ForceIP (system.force_ip), as in arena_api 2.7.1.
+    interface_infos = [{"ip": "169.254.1.1", "subnetmask": "255.255.0.0", "mac": "e0:00:00:00:00:01"}]
+    ignore_force_ip = False
+    forced: list = []
+
+    def force_ip(self, device_info):
+        self.forced = [*self.forced, dict(device_info)]
+        if self.ignore_force_ip:
+            return
+        for info in self.infos:
+            if info["mac"] == device_info["mac"]:
+                info["ip"] = device_info["ip"]
+                info["subnetmask"] = device_info["subnetmask"]
+                info["defaultgateway"] = device_info["defaultgateway"]
+
 
 class FakeBufferFactory:
     def __init__(self):

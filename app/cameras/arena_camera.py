@@ -31,12 +31,14 @@ from app.cameras.camera_device import (
     IncompleteFrameError,
     InvalidStateError,
     InvalidValueError,
+    NetworkCheck,
     NumericRange,
     Roi,
     RoiLimits,
     UnsupportedFeatureError,
 )
-from app.cameras.camera_discovery import ArenaDeviceInfo
+from app.cameras.camera_discovery import ArenaDeviceInfo, all_device_infos, force_ip, host_interfaces
+from app.cameras.network import ForceIpPlan, reachable_interface
 from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,7 @@ logger = logging.getLogger(__name__)
 # ~2 s of headroom at 9 FPS on a 12 MP camera (~12 MB per BayerRG8 buffer) to ride out short
 # host stalls without losing frames.
 DEFAULT_NUM_BUFFERS = 20
+FORCE_IP_TIMEOUT_S = 5.0
 
 # Transport-layer stream settings. OldestFirst keeps every frame in order so drops are visible as
 # frame-id gaps instead of being silently replaced (recording must never drop silently).
@@ -127,6 +130,7 @@ class ArenaCamera(CameraDevice):
             match = next((i for i in infos if i.get("mac") == self._info.mac), None)
             if match is None:
                 raise CameraDisconnectedError(f"{self.camera_id}: not found on the network")
+            self._info = ArenaDeviceInfo.from_sdk(match)  # current IP (may differ after a power cycle)
 
             try:
                 self._device = sdk.system.create_device(match)[0]
@@ -508,6 +512,33 @@ class ArenaCamera(CameraDevice):
             return bool(self._device is not None and self._device.is_connected())
         except Exception:  # noqa: BLE001
             return False
+
+    # --- network (Force IP) -------------------------------------------------
+    def network_check(self) -> NetworkCheck:
+        """Re-discover this camera (by MAC) and compare its subnet with the host adapters."""
+        devices = all_device_infos()
+        mine = next((d for d in devices if d.mac == self._info.mac), None)
+        if mine is None:
+            raise CameraDisconnectedError(f"{self.camera_id}: not found on the network")
+        self._info = mine  # IP may have changed (power cycle, Force IP)
+        interfaces = host_interfaces()
+        used = {d.ip for d in devices if d.mac != mine.mac} | {i.ip for i in interfaces}
+        reachable = reachable_interface(mine.ip, interfaces) is not None
+        return NetworkCheck(mine.ip, mine.subnet_mask, reachable, tuple(interfaces), frozenset(used))
+
+    def force_ip(self, plan: ForceIpPlan, timeout_s: float = FORCE_IP_TIMEOUT_S) -> None:
+        if self._device is not None:
+            raise InvalidStateError(f"{self.camera_id}: turn the camera off before forcing its IP")
+        old_ip = self._info.ip
+        force_ip(self._info.mac, plan.ip, plan.subnet_mask, plan.gateway)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:  # the camera re-announces itself with the new address
+            mine = next((d for d in all_device_infos(500) if d.mac == self._info.mac), None)
+            if mine is not None and mine.ip == plan.ip:
+                self._info = mine
+                logger.info("%s: IP forced %s -> %s (adapter %s)", self.camera_id, old_ip, plan.ip, plan.interface)
+                return
+        raise CameraError(f"{self.camera_id}: camera did not take IP {plan.ip} within {timeout_s:.0f}s")
 
     def _destroy_device(self) -> None:
         device, self._device = self._device, None

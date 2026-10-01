@@ -83,7 +83,7 @@ class MainWindow:
                     self._sidebar_window = sidebar
                     self._sidebar = CameraSidebar(
                         sidebar, self._manager, services.statuses, services.recording, services.profiles,
-                        self.open_property_grid,
+                        services.network, self.open_property_grid,
                     )
                 with dpg.child_window(width=-1, height=-STATUS_HEIGHT - 8, no_scrollbar=True) as area:
                     self._area_window = area

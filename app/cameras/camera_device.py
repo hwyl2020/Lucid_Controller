@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from app.acquisition.frame import Frame
+from app.cameras.network import ForceIpPlan, HostInterface
 from app.models.features import FeatureCategory
 
 
@@ -246,3 +247,22 @@ class CameraDevice(ABC):
     def execute_feature(self, name: str) -> None:
         """Execute a command feature by name."""
         raise UnsupportedFeatureError(f"{self.camera_id}: feature access not supported")
+
+    # --- network (GigE) ------------------------------------------------------
+    # Optional: only network cameras implement these.
+    def network_check(self) -> NetworkCheck | None:
+        """Is the camera reachable from a host adapter? None if not a network camera."""
+        return None
+
+    def force_ip(self, plan: ForceIpPlan) -> None:
+        """Temporarily move the camera to ``plan.ip`` (until it reboots)."""
+        raise UnsupportedFeatureError(f"{self.camera_id}: Force IP not supported")
+
+
+@dataclass(frozen=True)
+class NetworkCheck:
+    camera_ip: str
+    camera_subnet_mask: str
+    reachable: bool
+    interfaces: tuple[HostInterface, ...]  # host adapters (ip/mask/mac)
+    used_ips: frozenset[str]  # addresses of other cameras and of the host adapters

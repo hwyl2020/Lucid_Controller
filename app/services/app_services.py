@@ -10,6 +10,7 @@ from app.services.camera_control_service import CameraControlService
 from app.services.camera_status_service import CameraStatusService
 from app.services.feature_service import FeatureService
 from app.services.log_buffer import LogBuffer
+from app.services.network_service import NetworkService
 from app.services.performance_monitor import PerformanceMonitor
 from app.services.profile_service import ProfileService, SettingsApplier
 from app.services.reconnect_service import ReconnectService
@@ -26,6 +27,7 @@ class AppServices:
     controls: CameraControlService
     statuses: CameraStatusService
     features: FeatureService
+    network: NetworkService
     logs: LogBuffer
     recording: RecordingService
     reconnect: ReconnectService
@@ -51,6 +53,7 @@ class AppServices:
             controls=controls,
             statuses=statuses,
             features=FeatureService(manager),
+            network=NetworkService(manager),
             logs=logs if logs is not None else LogBuffer(),
             recording=recording,
             reconnect=reconnect,

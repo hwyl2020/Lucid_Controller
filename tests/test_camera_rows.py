@@ -16,6 +16,7 @@ from app.services.camera_control_service import CameraControlService
 from app.services.camera_status_service import CameraStatusService
 from app.services.configuration import DEFAULT_CONFIG
 from app.services.feature_service import FeatureService
+from app.services.network_service import NetworkService
 from app.services.profile_service import ProfileService, SettingsApplier
 from app.services.recording_service import RecordingService
 from app.ui.camera_sidebar import CameraSidebar
@@ -47,7 +48,8 @@ def sidebar(tmp_path):
     with dpg.window():
         with dpg.group() as parent:
             pass
-    bar = CameraSidebar(parent, manager, CameraStatusService(manager), recording, profiles, on_property_grid=opened.append)
+    bar = CameraSidebar(parent, manager, CameraStatusService(manager), recording, profiles, NetworkService(manager),
+                        on_property_grid=opened.append)
     yield bar, manager, recording, opened, tmp_path
     recording.stop()
     manager.shutdown()

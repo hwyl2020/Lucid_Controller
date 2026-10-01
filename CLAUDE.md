@@ -213,6 +213,19 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
   - The whole tree is re-read after every write, keeping expanded categories, because writes change other nodes' values and access.
 - **Hardware status:** the real-camera tree walk is not verified yet. The camera came back on 169.254.92.34 (link-local) while the PC is on 172.16.1.52/24, and connecting fails with `INVALID_ADDRESS`, which `_translate` now explains as a subnet mismatch.
 
+### Force IP and stream-locked features
+
+- **Stream-locked features:** on LUCID cameras `TLParamsLocked` is 1 while streaming, so PixelFormat, Width, Height etc. are RO. After the stream stops they are RW again (verified on the TRI122S-C).
+  - `CameraManager.stop_streaming` returns only after the worker has fully stopped the camera, and keeps reporting ACQUIRING until then. Before this fix, observers saw CONNECTED while the stream was still locked.
+  - `PropertyGridWindow` reloads on every state change of its camera. A change that arrives mid-load queues one more read. A banner shows while streaming.
+- **Force IP** (`cameras/network.py` holds the pure rules; the SDK calls live in `camera_discovery.host_interfaces/all_device_infos/force_ip`):
+  - `ArenaCamera.network_check()` re-discovers the camera by MAC and compares its subnet with `system.interface_infos`.
+  - `force_ip(plan)` calls `system.force_ip({mac, ip, subnetmask, defaultgateway})` and waits until the camera re-announces itself with the new IP. The address is temporary and lasts until the camera reboots; it is refused while the camera is open.
+  - `plan_force_ip` keeps the camera's host number when it is free (169.254.92.34 → 172.16.1.34) and never takes the adapter's own, the network, the broadcast or another camera's address. The gateway is 0.0.0.0.
+  - `NetworkService` prefers wired adapters (Wi-Fi is detected by adapter name via psutil). If several candidates remain, the row asks the user in a dialog.
+  - **ON button:** an unreachable camera gets its IP forced on the first click (the camera stays off, with an amber notice). The next click opens it. A reachable camera opens on the first click.
+  - Verified on the TRI122S-C: forced to 169.254.0.41/16, the app chose `Ethernet` over Wi-Fi, moved it back to 172.16.1.41, the second click opened it, and it streamed.
+
 ### Capability-driven GenICam
 
 Don't hard-code an exhaustive node list. Query what the connected camera supports:

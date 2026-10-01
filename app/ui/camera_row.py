@@ -28,6 +28,7 @@ from app.models.camera_status import CameraStatus
 from app.recording.recorder import RecordingMode
 from app.recording.snapshot import IMAGE_FORMATS
 from app.services.camera_status_service import CameraStatusService
+from app.services.network_service import NetworkService
 from app.services.profile_service import ProfileService
 from app.services.recording_service import RecordingError, RecordingService
 from app.ui import dialogs
@@ -40,7 +41,9 @@ CONTROL_WIDTH = 118
 POWER_WIDTH = 78
 STREAM_WIDTH = 36
 PLAY, STOP = "\u25ba", "\u25a0"  # Segoe UI has U+25BA/U+25A0 (not U+25B6)
-PENDING_LABELS = {"open": "Opening\u2026", "close": "Closing\u2026", "start": "\u2026", "stop": "\u2026"}
+PENDING_LABELS = {"check": "Checking\u2026", "close": "Closing\u2026", "force": "Forcing IP\u2026",
+                  "start": "\u2026", "stop": "\u2026"}
+WARNING_COLOR = (255, 159, 10)
 PANEL_TEXT_WRAP = 300
 DETAILS_REFRESH_S = 0.2
 ERROR_COLOR = STATE_COLORS[CameraState.ERROR]
@@ -75,6 +78,7 @@ class CameraRow:
         statuses: CameraStatusService,
         recording: RecordingService,
         profiles: ProfileService,
+        network: NetworkService,
         on_select: Callable[[str], None],
         on_property_grid: Callable[[str], None],
     ) -> None:
@@ -83,6 +87,9 @@ class CameraRow:
         self._statuses = statuses
         self._recording = recording
         self._profiles = profiles
+        self._network = network
+        self._notice: tuple[str, bool] | None = None  # (text, is_error) from the last power action
+        self._choose_adapter = None  # (check, candidates) waiting for the adapter dialog
         self._on_select = on_select
         self._on_property_grid = on_property_grid
         self.expanded = False
@@ -179,9 +186,11 @@ class CameraRow:
         return self._pending is not None
 
     def toggle_power(self) -> None:
-        """ON opens the camera (no streaming); OFF finishes recording, stops streaming, closes it."""
+        """ON: if the camera is not on a host adapter's subnet, the first click forces its IP and the
+        next click opens it; otherwise it opens directly (no streaming).
+        OFF: finishes recording, stops streaming, closes the camera."""
         if not self._pending:
-            self._run("close" if self.camera_on else "open")
+            self._run("close" if self.camera_on else "check")
 
     def toggle_stream(self) -> None:
         if self._pending or not self.camera_on:
@@ -193,12 +202,17 @@ class CameraRow:
         self._pending = action
         threading.Thread(target=self._do, args=(action,), daemon=True, name=f"{action}-{self.camera_id}").start()
 
-    def _do(self, action: str) -> None:
+    def _do(self, action: str, *args) -> None:
         cid = self.camera_id
         try:
-            if action == "open":
-                self._manager.stop_streaming(cid)  # clears a failed stream, if any
-                self._manager.connect(cid)
+            if action == "check":
+                check = self._network.check(cid)
+                if check is None or check.reachable:
+                    self._open()
+                else:
+                    self._fix_ip(check)
+            elif action == "force":
+                self._force(*args)
             elif action == "start":
                 self._manager.start_streaming(cid)
             else:  # "stop" or "close": finish the recording file before the stream goes away
@@ -208,10 +222,45 @@ class CameraRow:
                     self._manager.stop_streaming(cid)
                 else:
                     self._manager.disconnect(cid)
-        except CameraError as exc:
+        except (CameraError, ValueError) as exc:
             logger.error("Could not %s %s: %s", action, cid, exc)
+            self._notice = (str(exc), True)
         finally:
             self._pending = None
+
+    def _open(self) -> None:
+        self._manager.stop_streaming(self.camera_id)  # clears a failed stream, if any
+        self._manager.connect(self.camera_id)
+        self._notice = None
+
+    def _fix_ip(self, check) -> None:
+        """First ON click for an unreachable camera: force its IP (camera stays off)."""
+        candidates = self._network.candidate_interfaces(check)
+        if not candidates:
+            self._notice = (f"Camera is at {check.camera_ip}, but this PC has no network adapter with an "
+                            "IPv4 address to move it to.", True)
+        elif len(candidates) == 1:
+            self._force(check, candidates[0])
+        else:
+            self._choose_adapter = (check, candidates)  # the UI thread shows the dialog
+
+    def _force(self, check, interface) -> None:
+        plan = self._network.plan(check, interface)
+        self._network.force(self.camera_id, plan)
+        self._notice = (f"Camera was at {check.camera_ip}, not on this PC's subnet. IP forced to {plan.ip} "
+                        f"(adapter {interface}). Click ON again to turn the camera on.", False)
+
+    def _ask_adapter(self, check, candidates) -> None:
+        labels = {f"{i}  (adapter MAC {i.mac})" if i.mac else str(i): i for i in candidates}
+
+        def chosen(label: str) -> None:
+            self._pending = "force"
+            threading.Thread(target=self._do, args=("force", check, labels[label]), daemon=True,
+                             name=f"force-{self.camera_id}").start()
+
+        dialogs.choose("Force IP", f"The camera is at {check.camera_ip}. Move it to the subnet of which adapter "
+                       "(the one the camera is plugged into)?", list(labels), chosen,
+                       empty_text="No suitable network adapter found.")
 
     # --- recording / capture -----------------------------------------------------------
     def toggle_recording(self) -> None:
@@ -247,7 +296,11 @@ class CameraRow:
         dpg.configure_item(self.dot, color=STATE_COLORS[state])
         on, off, rec = CameraRow._themes
         pending = self._pending
-        if pending in ("open", "close"):
+        if self._choose_adapter is not None:  # dialogs must be created on the UI thread
+            check, candidates = self._choose_adapter
+            self._choose_adapter = None
+            self._ask_adapter(check, candidates)
+        if pending in ("check", "close", "force"):
             dpg.configure_item(self.power_button, label=PENDING_LABELS[pending], enabled=False)
         else:
             dpg.configure_item(self.power_button, label="ON" if camera_on else "OFF", enabled=pending is None)
@@ -274,7 +327,11 @@ class CameraRow:
         dpg.set_value(self.ip, status.ip_address or "No IP")
         if not self.expanded:
             return
-        if status.error:
+        if self._notice is not None and not camera_on:
+            text, is_error = self._notice
+            dpg.set_value(self.acq_text, text)
+            dpg.configure_item(self.acq_text, color=ERROR_COLOR if is_error else WARNING_COLOR)
+        elif status.error:
             self._set_text(self.acq_text, status.error, error=True)
         elif not camera_on:
             self._set_text(self.acq_text, "Camera off")

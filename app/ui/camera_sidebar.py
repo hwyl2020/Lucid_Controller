@@ -8,6 +8,7 @@ import dearpygui.dearpygui as dpg
 
 from app.cameras.camera_manager import CameraManager
 from app.services.camera_status_service import CameraStatusService
+from app.services.network_service import NetworkService
 from app.services.profile_service import ProfileService
 from app.services.recording_service import RecordingService
 from app.ui.camera_row import CameraRow
@@ -22,6 +23,7 @@ class CameraSidebar:
         statuses: CameraStatusService,
         recording: RecordingService,
         profiles: ProfileService,
+        network: NetworkService,
         on_property_grid: Callable[[str], None],
     ) -> None:
         self._manager = manager
@@ -35,7 +37,7 @@ class CameraSidebar:
             dpg.add_text("No cameras discovered", color=TEXT_DIM, parent=parent)
         for status in statuses.statuses():
             self.rows[status.camera_id] = CameraRow(
-                parent, status, manager, statuses, recording, profiles,
+                parent, status, manager, statuses, recording, profiles, network,
                 on_select=self.select, on_property_grid=on_property_grid,
             )
             dpg.add_spacer(height=2, parent=parent)
