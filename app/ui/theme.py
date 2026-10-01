@@ -32,6 +32,10 @@ _PALETTES = {
         "border": (56, 56, 58),
         "accent": (10, 132, 255),
         "accent_hover": (64, 156, 255),
+        "bar": (22, 22, 24),
+        "table_header": (48, 48, 52),
+        "row_alt": (40, 40, 42),
+        "popup": (36, 36, 38),
     },
     "light": {
         "window_bg": (242, 242, 247),
@@ -43,6 +47,10 @@ _PALETTES = {
         "border": (209, 209, 214),
         "accent": (0, 122, 255),
         "accent_hover": (40, 140, 255),
+        "bar": (229, 229, 234),
+        "table_header": (220, 220, 226),
+        "row_alt": (246, 246, 249),
+        "popup": (255, 255, 255),
     },
 }
 
@@ -85,6 +93,18 @@ def create_theme(name: str = "dark") -> int:
             dpg.add_theme_color(dpg.mvThemeCol_HeaderHovered, p["accent_hover"])
             dpg.add_theme_color(dpg.mvThemeCol_CheckMark, p["accent"])
             dpg.add_theme_color(dpg.mvThemeCol_SliderGrab, p["accent"])
+            # Bars, tables and popups: otherwise they keep Dear PyGui's dark defaults in light mode.
+            dpg.add_theme_color(dpg.mvThemeCol_MenuBarBg, p["bar"])
+            dpg.add_theme_color(dpg.mvThemeCol_TitleBg, p["bar"])
+            dpg.add_theme_color(dpg.mvThemeCol_TitleBgActive, p["accent"])
+            dpg.add_theme_color(dpg.mvThemeCol_TitleBgCollapsed, p["bar"])
+            dpg.add_theme_color(dpg.mvThemeCol_TableHeaderBg, p["table_header"])
+            dpg.add_theme_color(dpg.mvThemeCol_TableRowBgAlt, p["row_alt"])
+            dpg.add_theme_color(dpg.mvThemeCol_TableBorderStrong, p["border"])
+            dpg.add_theme_color(dpg.mvThemeCol_TableBorderLight, p["border"])
+            dpg.add_theme_color(dpg.mvThemeCol_PopupBg, p["popup"])
+            dpg.add_theme_color(dpg.mvThemeCol_Separator, p["border"])
+            dpg.add_theme_color(dpg.mvThemeCol_ScrollbarBg, p["window_bg"])
             dpg.add_theme_style(dpg.mvStyleVar_WindowRounding, 0)
             dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 8)
             dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 6)

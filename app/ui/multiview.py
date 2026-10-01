@@ -5,6 +5,7 @@ from __future__ import annotations
 import dearpygui.dearpygui as dpg
 
 from app.cameras.camera_manager import CameraManager
+from app.services.reconnect_service import ReconnectService
 from app.services.recording_service import RecordingService
 from app.ui.camera_view import CameraView
 from app.ui.theme import TEXT_DIM
@@ -22,10 +23,16 @@ TILE_SPACING = 6
 
 class MultiView:
     def __init__(
-        self, parent: int | str, manager: CameraManager, layout: str = "2x2", recording: RecordingService | None = None
+        self,
+        parent: int | str,
+        manager: CameraManager,
+        layout: str = "2x2",
+        recording: RecordingService | None = None,
+        reconnect: ReconnectService | None = None,
     ) -> None:
         self._manager = manager
         self._recording = recording
+        self._reconnect = reconnect
         self._views: list[CameraView] = []
         self._rows: list[int | str] = []
         self._grid_size = (0, 0)
@@ -35,7 +42,7 @@ class MultiView:
         with dpg.group(horizontal=True, parent=parent):
             dpg.add_text("MULTIVIEW", color=TEXT_DIM)
             dpg.add_spacer(width=12)
-            dpg.add_combo(
+            self._layout_combo = dpg.add_combo(
                 list(LAYOUTS),
                 default_value=self._layout,
                 width=80,
@@ -52,7 +59,11 @@ class MultiView:
         if layout == self._layout or layout not in LAYOUTS:
             return
         self._layout = layout
+        dpg.set_value(self._layout_combo, layout)
         self._build()
+
+    def display_fps(self, camera_id: str) -> float:
+        return next((v.display_fps for v in self._views if v.camera_id == camera_id), 0.0)
 
     def update(self) -> None:
         width, height = dpg.get_item_rect_size(self._grid)
@@ -60,7 +71,7 @@ class MultiView:
             self._grid_size = (width, height)
             self._resize_tiles()
         for view in self._views:
-            view.update(self._manager, self._recording)
+            view.update(self._manager, self._recording, self._reconnect)
 
     def _build(self) -> None:
         for view in self._views:

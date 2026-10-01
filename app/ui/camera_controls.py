@@ -17,6 +17,7 @@ from app.cameras.camera_device import CameraError, NumericRange, Roi
 from app.cameras.camera_manager import CameraManager
 from app.models.camera_state import CameraState
 from app.services.camera_control_service import CameraControlService, ControlSnapshot
+from app.services.profile_service import ProfileService
 from app.ui.theme import STATE_COLORS, TEXT_DIM
 
 logger = logging.getLogger(__name__)
@@ -33,9 +34,17 @@ class _NumericRow:
 
 
 class CameraControlsPanel:
-    def __init__(self, parent: int | str, manager: CameraManager, service: CameraControlService, wrap: int) -> None:
+    def __init__(
+        self,
+        parent: int | str,
+        manager: CameraManager,
+        service: CameraControlService,
+        profiles: ProfileService,
+        wrap: int,
+    ) -> None:
         self._manager = manager
         self._service = service
+        self._profiles = profiles
         self._camera_id: str | None = None
         self._last_state: CameraState | None = None
         self._last_refresh = 0.0
@@ -68,9 +77,18 @@ class CameraControlsPanel:
                 self._roi_full = dpg.add_button(label="Full frame", callback=self._on_roi_full)
             self._roi_text = dpg.add_text("", color=TEXT_DIM, wrap=wrap)
 
+            dpg.add_spacer(height=4)
+            dpg.add_text("Profile")
+            with dpg.group(horizontal=True):
+                self._profile_combo = dpg.add_combo([], width=180, no_preview=False)
+                dpg.add_button(label="Apply", callback=self._on_profile_apply)
+            with dpg.group(horizontal=True):
+                self._profile_name = dpg.add_input_text(hint="New profile name", width=180)
+                dpg.add_button(label="Save", callback=self._on_profile_save)
+
         self._inputs = [
             self._exposure.input, self._gain.input, self._frame_rate.input, self._pixel_format,
-            self._roi_x, self._roi_y, self._roi_w, self._roi_h,
+            self._roi_x, self._roi_y, self._roi_w, self._roi_h, self._profile_combo, self._profile_name,
         ]
 
     # --- per-frame --------------------------------------------------------
@@ -133,6 +151,7 @@ class CameraControlsPanel:
         return _NumericRow(widget, range_text)
 
     def _populate(self, snap: ControlSnapshot) -> None:
+        self._refresh_profiles()
         self._set_numeric(self._exposure, snap.exposure, snap.exposure_range)
         self._set_numeric(self._gain, snap.gain, snap.gain_range)
         self._set_numeric(self._frame_rate, snap.frame_rate, snap.frame_rate_range)
@@ -155,6 +174,12 @@ class CameraControlsPanel:
             )
         else:
             dpg.set_value(self._roi_text, "ROI not supported by this camera")
+
+    def _refresh_profiles(self) -> None:
+        names = self._profiles.list_profiles()
+        dpg.configure_item(self._profile_combo, items=names)
+        if dpg.get_value(self._profile_combo) not in names:
+            dpg.set_value(self._profile_combo, names[0] if names else "")
 
     def _set_numeric(self, row: _NumericRow, value: float | None, value_range: NumericRange | None) -> None:
         supported = value_range is not None and value is not None
@@ -186,6 +211,37 @@ class CameraControlsPanel:
 
     def _on_roi_full(self) -> None:
         self._apply(lambda cid: self._service.reset_roi(cid), "ROI reset to full frame {0.width}×{0.height}")
+
+    def _on_profile_apply(self) -> None:
+        name = dpg.get_value(self._profile_combo)
+        if not name or self._camera_id is None:
+            self._show_message("Choose a profile to apply", error=True)
+            return
+        try:
+            warnings = self._profiles.apply(self._camera_id, name)
+        except CameraError as exc:
+            self._show_message(str(exc), error=True)
+        else:
+            if warnings:
+                self._show_message(f"Profile '{name}' applied with warnings: " + "; ".join(warnings), error=True)
+            else:
+                self._show_message(f"Profile '{name}' applied")
+        self.refresh()
+
+    def _on_profile_save(self) -> None:
+        name = dpg.get_value(self._profile_name).strip()
+        if not name or self._camera_id is None:
+            self._show_message("Type a name for the new profile", error=True)
+            return
+        try:
+            path = self._profiles.save(self._camera_id, name)
+        except (CameraError, OSError, ValueError) as exc:
+            self._show_message(str(exc), error=True)
+            return
+        dpg.set_value(self._profile_name, "")
+        self._refresh_profiles()
+        dpg.set_value(self._profile_combo, name)
+        self._show_message(f"Profile '{name}' saved to {path}")
 
     def _apply(self, action: Callable[[str], object], success: str) -> None:
         camera_id = self._camera_id

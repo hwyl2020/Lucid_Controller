@@ -132,6 +132,28 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Bayer naming:** OpenCV demosaic codes are swapped relative to GenICam: GenICam RG = OpenCV BG, and GR = GB. `processing._CV_DEMOSAIC` holds the mapping, verified against the SDK in `test_arena_sdk_buffers.py`.
 - **Verified on the TRI122S-C:** a 6 s raw recording gave 58 × 12 MP BayerRG8 frames, 0 gaps and 0 overflows. Snapshot colours were correct.
 
+### Application services (Milestone 7)
+
+- **`AppServices`** (`app/services/app_services.py`) builds and owns every service. `MainWindow(services)` receives this one object.
+  - Shutdown order is reconnect → recording → cameras.
+  - New services go here, not into ad-hoc constructor arguments.
+- **`ReconnectService`:**
+  - A background thread retries `CameraManager.reconnect()` with exponential backoff (2 s → 30 s).
+  - It only acts on cameras in ERROR because of a `CameraDisconnectedError` that the user still wants streaming (`CameraManager.wants_streaming`; `stop_streaming` clears it).
+  - Recording resumes automatically because queues persist on the manager.
+  - It can be toggled from Cameras ▸ Auto-reconnect or in Settings.
+- **`PerformanceMonitor`:**
+  - Per-camera FPS, MB/s, frames missed (frame-id gaps, now counted generically in `AcquisitionWorker`), timeouts, the camera's NIC (matched by subnet) and recording queue/drops.
+  - Host CPU, RAM, per-NIC receive rate and disk write via `psutil` deltas, sampled at most once a second.
+  - The Performance window (View menu) costs about 1 ms per frame.
+- **Profiles** (`profiles/*.json`) and **sessions** (`sessions/*.json`, gitignored):
+  - `SettingsApplier` captures and applies settings in the order format → ROI → exposure → gain → frame rate, through `CameraControlService`, so values are clamped to the target camera.
+  - Failures become warnings rather than exceptions.
+- **Settings window** (File ▸ Settings): edits and saves `config.json`, and applies the theme, log level, auto-reconnect and recording settings live. Recording settings take effect on the next recording.
+- **Diagnostics** (File ▸ Export diagnostics): writes `diagnostics/diagnostics_*.zip` with system, network, camera and config info plus the logs. It never opens the SDK itself.
+- **Theming:** light/dark palettes in `theme.py` must set the bar, table and popup colours too, otherwise Dear PyGui keeps its dark defaults. Use `(-255, 0, 0, 255)` as a text colour to mean "theme default".
+- **Verified on the TRI122S-C:** the performance monitor showed 9.1 FPS, 111 MB/s, 0 missed frames, NIC `Ethernet`. Profile save/apply worked with no warnings.
+
 ### Capability-driven GenICam
 
 Don't hard-code an exhaustive node list. Query what the connected camera supports:

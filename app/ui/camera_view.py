@@ -10,6 +10,7 @@ import numpy as np
 
 from app.acquisition.processing import PixelConversionError, to_display_rgba
 from app.cameras.camera_manager import CameraManager
+from app.services.reconnect_service import ReconnectService
 from app.services.recording_service import RecordingService
 from app.models.camera_state import CameraState
 from app.ui.theme import STATE_COLORS, TEXT_DIM
@@ -73,7 +74,16 @@ class CameraView:
         dpg.configure_item(self._info, pos=(10, height - FOOTER_HEIGHT))
         self._layout_image()
 
-    def update(self, manager: CameraManager, recording: RecordingService | None = None) -> None:
+    @property
+    def display_fps(self) -> float:
+        return self._display_fps
+
+    def update(
+        self,
+        manager: CameraManager,
+        recording: RecordingService | None = None,
+        reconnect: ReconnectService | None = None,
+    ) -> None:
         if self.camera_id is None:
             dpg.set_value(self._state, "")
             dpg.set_value(self._info, "")
@@ -107,6 +117,13 @@ class CameraView:
                 f"cam {stats.measured_fps:5.1f} fps   disp {self._display_fps:5.1f} fps   #{frame_id}",
             )
         error = manager.last_error(self.camera_id)
+        retry = reconnect.state(self.camera_id) if reconnect is not None and error else None
+        if retry is not None:
+            error = (
+                f"Connection lost — reconnecting (attempt {retry.attempts + 1} in {retry.next_attempt_in:.0f}s)"
+                if retry.attempts
+                else "Connection lost — reconnecting..."
+            )
         if error:
             # Keep the last image visible; report the error in the footer (or centre if no image).
             dpg.set_value(self._info, error)

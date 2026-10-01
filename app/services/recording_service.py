@@ -69,17 +69,22 @@ class _Session:
 class RecordingService:
     def __init__(self, manager: CameraManager, config: dict) -> None:
         self._manager = manager
-        rec_cfg = config["recording"]
-        self._base_dir = Path(rec_cfg["directory"])
-        self._snapshot_dir = Path(config["snapshots"]["directory"])
-        self._queue_frames = int(rec_cfg["queue_frames"])
-        self._min_free_bytes = int(float(rec_cfg["min_free_gb"]) * 1e9)
-        self.default_mode = RecordingMode(rec_cfg["mode"])
         self._lock = threading.RLock()
+        self.reconfigure(config)
         self._session: _Session | None = None
         self._last_error: str | None = None
         self._free_bytes: int | None = None
-        self._last_disk_check = 0.0
+
+    def reconfigure(self, config: dict) -> None:
+        """Apply recording/snapshot settings. Takes effect for the next recording."""
+        rec_cfg = config["recording"]
+        with self._lock:
+            self._base_dir = Path(rec_cfg["directory"])
+            self._snapshot_dir = Path(config["snapshots"]["directory"])
+            self._queue_frames = int(rec_cfg["queue_frames"])
+            self._min_free_bytes = int(float(rec_cfg["min_free_gb"]) * 1e9)
+            self.default_mode = RecordingMode(rec_cfg["mode"])
+            self._last_disk_check = 0.0
 
     # --- recording ----------------------------------------------------------
     @property

@@ -24,6 +24,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "snapshots": {
         "directory": "snapshots",
     },
+    "profiles": {
+        "directory": "profiles",
+    },
+    "sessions": {
+        "directory": "sessions",
+    },
+    "reconnect": {
+        "enabled": True,
+    },
+    "diagnostics": {
+        "directory": "diagnostics",
+    },
     "logging": {
         "directory": "logs",
         "level": "INFO",
