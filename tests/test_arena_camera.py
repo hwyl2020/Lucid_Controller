@@ -144,14 +144,23 @@ def test_mono12_kept_as_uint16(camera, sdk):
     np.testing.assert_array_equal(frame.data, data)
 
 
-def test_bayer_converted_by_sdk_and_destroyed(camera, sdk):
+def test_bayer_passed_through_raw(camera, sdk):
     data = np.arange(12, dtype=np.uint8).reshape(3, 4)
     device_of(sdk).buffers.append(FakeBuffer(data, PixelFormat.BayerRG8, 1, 8))
     camera.start_acquisition()
     frame = camera.get_frame()
-    assert frame.pixel_format == "RGB8" and frame.data.shape == (3, 4, 3)
-    assert sdk.factory.destroyed == sdk.factory.converted
-    np.testing.assert_array_equal(frame.data[:, :, 0], data)
+    assert frame.pixel_format == "BayerRG8" and frame.data.shape == (3, 4)
+    np.testing.assert_array_equal(frame.data, data)
+    assert sdk.factory.converted == []
+
+
+def test_packed_format_converted_by_sdk_and_destroyed(camera, sdk):
+    data = np.arange(12, dtype=np.uint8).reshape(3, 4)
+    device_of(sdk).buffers.append(FakeBuffer(data, PixelFormat.Mono10p, 1, 10))
+    camera.start_acquisition()
+    frame = camera.get_frame()
+    assert frame.pixel_format == "Mono8" and frame.data.shape == (3, 4)
+    assert sdk.factory.destroyed == sdk.factory.converted and len(sdk.factory.converted) == 1
 
 
 def test_incomplete_frame_discarded_and_requeued(camera, sdk):

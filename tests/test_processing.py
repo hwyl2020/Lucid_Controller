@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from app.acquisition.frame import Frame
-from app.acquisition.processing import PixelConversionError, to_display_rgba
+from app.acquisition.processing import PixelConversionError, bayer_preview, to_display_rgba
 
 
 def make_frame(data, pixel_format):
@@ -60,4 +60,35 @@ def test_mismatched_output_buffer_is_replaced():
 
 def test_unsupported_format_raises():
     with pytest.raises(PixelConversionError):
-        to_display_rgba(make_frame(np.zeros((2, 2), np.uint8), "BayerRG8"))
+        to_display_rgba(make_frame(np.zeros((2, 2), np.uint8), "YUV422_8"))
+
+
+@pytest.mark.parametrize(
+    "phase,cell",
+    [
+        ("RG", [[200, 100], [100, 50]]),
+        ("GR", [[100, 200], [50, 100]]),
+        ("GB", [[100, 50], [200, 100]]),
+        ("BG", [[50, 100], [100, 200]]),
+    ],
+)
+def test_bayer_preview_phases(phase, cell):
+    # Each cell holds R=200, G=100, B=50 placed according to the phase.
+    raw = np.tile(np.array(cell, np.uint8), (4, 4))
+    rgb = bayer_preview(raw, phase)
+    assert rgb.shape == (4, 4, 3)
+    assert tuple(rgb[0, 0]) == (200, 100, 50)
+
+
+def test_bayer_preview_averages_greens_and_handles_16bit():
+    raw = np.array([[4095, 1000], [3000, 0]], np.uint16)  # BayerRG12: R G / G B
+    rgb = bayer_preview(raw, "RG", bits=12)
+    red, green, blue = (int(v) for v in rgb[0, 0])
+    assert (red, blue) == (255, 0)
+    assert abs(green - (1000 // 16 + 3000 // 16) / 2) <= 1  # mean of the two 12->8 bit greens
+
+
+def test_bayer_frame_displays_at_half_resolution():
+    raw = np.zeros((300, 400), np.uint8)
+    out = to_display_rgba(make_frame(raw, "BayerRG8"), max_side=1024)
+    assert out.shape == (150, 200, 4)

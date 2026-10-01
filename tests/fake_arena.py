@@ -22,6 +22,7 @@ class PixelFormat(enum.IntEnum):
     Mono12 = 2
     RGB8 = 3
     BayerRG8 = 4
+    Mono10p = 5
 
 
 fake_enums = SimpleNamespace(PixelFormat=PixelFormat)
@@ -139,8 +140,11 @@ class FakeBufferFactory:
 
     def convert(self, buffer, new_pixel_format, bayer_algorithm=None):
         mono = np.ctypeslib.as_array(buffer.pdata, shape=(buffer.height * buffer.width,))
-        rgb = np.repeat(mono.reshape(buffer.height, buffer.width)[:, :, None], 3, axis=2)
-        out = FakeBuffer(rgb, PixelFormat[new_pixel_format.name], buffer.frame_id, 24)
+        mono = mono.reshape(buffer.height, buffer.width).copy()
+        if new_pixel_format.name == "Mono8":
+            out = FakeBuffer(mono, PixelFormat.Mono8, buffer.frame_id, 8)
+        else:
+            out = FakeBuffer(np.repeat(mono[:, :, None], 3, axis=2), PixelFormat[new_pixel_format.name], buffer.frame_id, 24)
         self.converted.append(out)
         return out
 

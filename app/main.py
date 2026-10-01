@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from pathlib import Path
 
 import dearpygui.dearpygui as dpg
@@ -18,6 +19,8 @@ from app.services.logging_service import setup_logging
 from app.ui.main_window import APP_TITLE, MainWindow
 
 logger = logging.getLogger(__name__)
+
+UI_MAX_FPS = 60
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,9 +82,15 @@ def main() -> None:
         window = MainWindow(config, manager)
         dpg.setup_dearpygui()
         dpg.show_viewport()
+        frame_period = 1.0 / UI_MAX_FPS
         while dpg.is_dearpygui_running():
+            started = time.perf_counter()
             window.update()
             dpg.render_dearpygui_frame()
+            # Cap the UI rate: spare CPU matters for GigE packet handling at high bandwidth.
+            remaining = frame_period - (time.perf_counter() - started)
+            if remaining > 0:
+                time.sleep(remaining)
     finally:
         manager.shutdown()
         dpg.destroy_context()

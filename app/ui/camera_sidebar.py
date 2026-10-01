@@ -43,6 +43,10 @@ class CameraSidebar:
             dpg.add_button(label="Start all", width=70, callback=self.start_all)
             dpg.add_button(label="Stop all", width=70, callback=self.stop_all)
 
+        # Start/Stop act on the selection; preselect so they work on first click.
+        if manager.camera_ids:
+            self._on_select(None, True, manager.camera_ids[0])
+
     def update(self) -> None:
         for camera_id, (dot, _) in self._rows.items():
             dpg.configure_item(dot, color=STATE_COLORS[self._manager.state(camera_id)])

@@ -68,10 +68,22 @@ Dear PyGui UI → Application Services → CameraManager → CameraDevice (inter
 - **Reading pixels:**
   - Never use `buffer.data`: it builds a Python list.
   - Copy from `buffer.pdata` (`POINTER(c_uint8)`) with `np.ctypeslib.as_array`, honour `padding_x`, and requeue in `finally`.
-- **Pixel conversion:** non-passthrough formats are converted by `BufferFactory.convert` to RGB8 (or Mono8 for mono), then the converted buffer is destroyed. This covers Bayer, BGR and packed formats. A test confirmed that BayerRG8 comes out with red in channel 0.
+- **Bayer stays raw** (BayerXX8 as uint8, BayerXX10/12/16 as uint16) in `Frame`:
+  - On a TRI122S-C (12 MP), SDK `BufferFactory.convert` to RGB8 took about 70 ms per frame plus an 18 ms copy, which starved the stream (3 FPS, dropped frames). A raw copy takes about 4 ms.
+  - Display uses `processing.bayer_preview`, a 2×2 binning with the phase from the PFNC name. It was checked against the SDK's demosaic on real frames (channel correlation ≥ 0.999).
+- **Other formats** (packed, BGR, YUV) still go through `BufferFactory.convert`, which is slow at high resolution.
 - **Stream settings:** `StreamBufferHandlingMode=OldestFirst`, so drops show up as frame-id gaps (`ArenaCamera.missed_frames`) instead of being replaced silently.
 - **Setter prerequisites:** `ExposureAuto` and `GainAuto` must be set to `Off`, and `AcquisitionFrameRateEnable` to `True`, before writing the corresponding values.
 - **Disconnects:** a pulled cable surfaces as get_buffer timeouts. `get_frame` checks `is_connected()` on each timeout and raises `CameraDisconnectedError`.
+
+### Hardware notes (this dev PC)
+
+- **Camera:** TRI122S-C, S/N 263401242, 4024×3036, BayerRG8 by default, max about 9.1 FPS at 109.5 ms exposure.
+- **Network:** on `Ethernet` (Realtek PCIe GbE, 172.16.1.52/24). Jumbo frames are 9014; Receive Buffers are 512, and LUCID recommends the adapter maximum.
+- **Bandwidth:** 12 MP × 9.1 FPS is about 880 Mbit/s, close to the 1 GbE limit, so host CPU stalls show up as missed frames.
+- **Mitigations in code:** the UI loop is capped at 60 FPS (`main.UI_MAX_FPS`), and there are 20 stream buffers (`DEFAULT_NUM_BUFFERS`).
+- **Results:** CLI check with no UI: 150 frames, 0 missed. Full UI: about 176 frames per 20 s, 0–1 missed.
+- **Open issue:** Dear PyGui's `render_dearpygui_frame()` occasionally blocks for about 1 s. The camera thread is unaffected because the GIL is released.
 
 ### Acquisition pipeline
 

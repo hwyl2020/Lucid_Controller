@@ -40,7 +40,9 @@ from app.cameras.camera_discovery import ArenaDeviceInfo
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_NUM_BUFFERS = 10
+# ~2 s of headroom at 9 FPS on a 12 MP camera (~12 MB per BayerRG8 buffer) to ride out short
+# host stalls without losing frames.
+DEFAULT_NUM_BUFFERS = 20
 
 # Transport-layer stream settings. OldestFirst keeps every frame in order so drops are visible as
 # frame-id gaps instead of being silently replaced (recording must never drop silently).
@@ -51,12 +53,16 @@ STREAM_SETTINGS: dict[str, object] = {
 }
 
 # Formats copied as-is: name -> (numpy dtype, channels, bits per pixel in the buffer).
+# Bayer stays raw: copying a 12 MP BayerRG8 frame takes ~4 ms, whereas SDK conversion to RGB8 plus
+# the copy took ~90 ms on a TRI122S-C, starving the stream. Display demosaics a downscaled preview.
 PASSTHROUGH_FORMATS: dict[str, tuple[type, int, int]] = {
     "Mono8": (np.uint8, 1, 8),
     "Mono10": (np.uint16, 1, 16),
     "Mono12": (np.uint16, 1, 16),
     "Mono16": (np.uint16, 1, 16),
     "RGB8": (np.uint8, 3, 24),
+    **{f"Bayer{p}8": (np.uint8, 1, 8) for p in ("RG", "GR", "GB", "BG")},
+    **{f"Bayer{p}{b}": (np.uint16, 1, 16) for p in ("RG", "GR", "GB", "BG") for b in (10, 12, 16)},
 }
 
 
@@ -316,8 +322,8 @@ class ArenaCamera(CameraDevice):
         if spec is not None and int(buffer.bits_per_pixel) == spec[2]:
             return _copy_pixels(buffer, spec[0], spec[1]), name
 
-        # Everything else (Bayer, BGR, packed mono, ...) is converted by the SDK itself, which
-        # knows the exact Bayer phase and packing; avoids guessing OpenCV equivalents.
+        # Everything else (packed formats, BGR, YUV, ...) is converted by the SDK itself, which
+        # knows the exact packing. Slow at high resolution; prefer a passthrough format.
         target = "Mono8" if name.startswith("Mono") else "RGB8"
         sdk = arena_sdk.load()
         try:

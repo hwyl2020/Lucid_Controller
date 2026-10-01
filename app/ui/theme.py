@@ -91,4 +91,13 @@ def create_theme(name: str = "dark") -> int:
             dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 12, 12)
             dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 8, 8)
             dpg.add_theme_style(dpg.mvStyleVar_WindowBorderSize, 0)
+        # Disabled widgets must look disabled; by default they are indistinguishable.
+        for item_type in (dpg.mvButton, dpg.mvInputFloat, dpg.mvInputInt, dpg.mvSliderFloat, dpg.mvCombo):
+            with dpg.theme_component(item_type, enabled_state=False):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, p["text_dim"])
+                dpg.add_theme_color(dpg.mvThemeCol_Button, p["window_bg"])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, p["window_bg"])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, p["window_bg"])
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBg, p["window_bg"])
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBgHovered, p["window_bg"])
     return theme
