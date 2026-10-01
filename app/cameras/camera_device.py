@@ -35,6 +35,10 @@ class FrameTimeoutError(CameraError):
     pass
 
 
+class IncompleteFrameError(FrameTimeoutError):
+    """A frame arrived with missing data and was discarded. Retry like a timeout."""
+
+
 class UnsupportedFeatureError(CameraError):
     pass
 

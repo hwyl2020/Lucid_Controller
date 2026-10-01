@@ -1,4 +1,4 @@
-"""Entry point: python -m app.main [--config PATH] [--log-level LEVEL] [--simulators N]"""
+"""Entry point: python -m app.main [--config PATH] [--log-level LEVEL] [--simulators N] [--no-arena]"""
 
 from __future__ import annotations
 
@@ -8,6 +8,9 @@ from pathlib import Path
 
 import dearpygui.dearpygui as dpg
 
+from app.cameras.arena_camera import ArenaCamera
+from app.cameras.camera_device import CameraError
+from app.cameras.camera_discovery import discover_arena_cameras
 from app.cameras.camera_manager import CameraManager
 from app.cameras.simulator_camera import PATTERNS, SimulatorCamera, SimulatorConfig
 from app.services.configuration import load_config
@@ -22,8 +25,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=Path("config.json"))
     parser.add_argument("--log-level", default=None, help="Overrides logging.level in config")
     parser.add_argument(
-        "--simulators", type=int, default=4, help="Number of SimulatorCameras to add (default 4)"
+        "--simulators",
+        type=int,
+        default=None,
+        help="Number of SimulatorCameras to add (default: 4 if no Arena camera is found, else 0)",
     )
+    parser.add_argument("--no-arena", action="store_true", help="Skip Arena SDK camera discovery")
     return parser.parse_args()
 
 
@@ -41,6 +48,17 @@ def add_simulators(manager: CameraManager, count: int) -> None:
         )
 
 
+def add_arena_cameras(manager: CameraManager) -> int:
+    try:
+        infos = discover_arena_cameras()
+    except CameraError as exc:
+        logger.error("%s", exc)
+        return 0
+    for info in infos:
+        manager.add_camera(ArenaCamera(info))
+    return len(infos)
+
+
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
@@ -49,7 +67,11 @@ def main() -> None:
     logger.info("Starting %s (log: %s)", APP_TITLE, log_file)
 
     manager = CameraManager()
-    add_simulators(manager, args.simulators)
+    arena_count = 0 if args.no_arena else add_arena_cameras(manager)
+    simulators = args.simulators if args.simulators is not None else (0 if arena_count else 4)
+    if simulators and not arena_count and args.simulators is None:
+        logger.info("No Arena cameras found; adding %d simulator cameras", simulators)
+    add_simulators(manager, simulators)
 
     dpg.create_context()
     try:

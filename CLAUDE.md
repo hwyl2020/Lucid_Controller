@@ -22,7 +22,8 @@ The venv is created with `--system-site-packages` so it can see the globally ins
 ```bash
 python -m venv --system-site-packages .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m app.main [--config config.json] [--log-level DEBUG] [--simulators N]   # run the app (default: 4 simulators)
+.venv\Scripts\python -m app.main [--config config.json] [--log-level DEBUG] [--simulators N] [--no-arena]   # run the app
+.venv\Scripts\python -m scripts.arena_hardware_check [--frames 100] [--serial S]   # real-camera check (CLI, no UI)
 .venv\Scripts\python -m pytest                                               # all tests
 .venv\Scripts\python -m pytest tests/test_configuration.py::test_name        # single test
 ```
@@ -30,6 +31,10 @@ python -m venv --system-site-packages .venv
 - `config.json` (gitignored) is optional. It is merged over `DEFAULT_CONFIG` in `app/services/configuration.py`, so only overrides need to be written.
 - Logs go to `logs/lucid_camera_studio.log`, a rotating file.
 - pytest runs from the repo root, with `pythonpath = .` set in `pyproject.toml`.
+- **Startup:** the app discovers Arena cameras first. If none are found and `--simulators` is not given, it adds 4 simulators. Discovery takes about 1 s at startup.
+- **Tests without hardware:**
+  - `tests/fake_arena.py` is an in-memory fake of the `arena_api` surface that `ArenaCamera` uses.
+  - `tests/test_arena_sdk_buffers.py` exercises the **real** installed SDK through `BufferFactory.create`, with no camera needed. It is skipped if the SDK is absent.
 
 ## Architecture
 
@@ -40,7 +45,7 @@ Dear PyGui UI → Application Services → CameraManager → CameraDevice (inter
 ```
 
 - UI modules (`app/ui/`) must **never** import `arena_api` or touch Arena objects, buffers or nodes.
-- All Arena-specific code stays in `app/cameras/arena_camera.py` and the related discovery code.
+- All Arena-specific code stays in `app/cameras/arena_camera.py`, `camera_discovery.py` and `arena_sdk.py`. `arena_sdk.load()` is the only place `arena_api` is imported, and the import is deferred because importing `arena_api.system` opens the SDK.
 - `CameraDevice` is the shared interface between the two developers' areas of work (camera engine and UI). Change it only on purpose, and document the change.
 
 ### `CameraDevice` conventions (`app/cameras/camera_device.py`)
@@ -55,6 +60,18 @@ Dear PyGui UI → Application Services → CameraManager → CameraDevice (inter
 
 - `ArenaCamera` is the production backend. It handles init, discovery, connect/disconnect, stream setup, buffer requeueing, node access and cleanup.
 - `SimulatorCamera` is a first-class backend, used for UI development, tests and multiview/recording testing without hardware. It has configurable resolution, FPS, test pattern and camera ID, plus simulated disconnects. The UI must work with it without any simulator-specific code.
+
+### Arena SDK facts (verified against arena_api 2.7.1 source)
+
+- **Timeouts:** `device.get_buffer(timeout=...)` takes an **int in ms** and raises the builtin `TimeoutError`. Other SDK failures raise plain `Exception`s whose message contains the ArenaC error name (e.g. `ACCESS_DENIED -1005`). `ArenaCamera._translate` maps these to `CameraError` subclasses.
+- **Device list:** the order of `system.device_infos` is not stable, so match devices by MAC. `create_device(info)` returns a list. Every device must be destroyed with `system.destroy_device`.
+- **Reading pixels:**
+  - Never use `buffer.data`: it builds a Python list.
+  - Copy from `buffer.pdata` (`POINTER(c_uint8)`) with `np.ctypeslib.as_array`, honour `padding_x`, and requeue in `finally`.
+- **Pixel conversion:** non-passthrough formats are converted by `BufferFactory.convert` to RGB8 (or Mono8 for mono), then the converted buffer is destroyed. This covers Bayer, BGR and packed formats. A test confirmed that BayerRG8 comes out with red in channel 0.
+- **Stream settings:** `StreamBufferHandlingMode=OldestFirst`, so drops show up as frame-id gaps (`ArenaCamera.missed_frames`) instead of being replaced silently.
+- **Setter prerequisites:** `ExposureAuto` and `GainAuto` must be set to `Off`, and `AcquisitionFrameRateEnable` to `True`, before writing the corresponding values.
+- **Disconnects:** a pulled cable surfaces as get_buffer timeouts. `get_frame` checks `is_connected()` on each timeout and raises `CameraDisconnectedError`.
 
 ### Acquisition pipeline
 
@@ -78,7 +95,7 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - `MultiView` lays out `CameraView` tiles. Each tile polls `latest_frame()`, converts it with `processing.to_display_rgba` into a **reused** float32 buffer, and pushes it to a raw texture.
 - Textures are sized to the tile, rounded up to one of the `TEXTURE_SIDES` sizes.
 - **Performance:** allocating a new float buffer per frame cost about 18 ms per tile. Reusing the buffer (`out=`) and sizing textures to the tile took four 720p simulators from 13 to 39 render FPS. Keep both.
-- **Bayer:** display conversion is intentionally absent until it is verified against a real camera, because GenICam and OpenCV name the Bayer phases differently.
+- **Bayer:** `processing.py` has no display conversion for Bayer. `ArenaCamera` already delivers RGB8 via the SDK, and doing it in OpenCV risks a wrong Bayer-phase mapping.
 - **Fonts:** Dear PyGui's default font has no `●` glyph, so `theme.load_font()` loads Segoe UI.
 
 ### Capability-driven GenICam
