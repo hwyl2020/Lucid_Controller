@@ -113,7 +113,6 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Performance:** allocating a new float buffer per frame cost about 18 ms per tile. Reusing the buffer (`out=`) and sizing textures to the tile took four 720p simulators from 13 to 39 render FPS. Keep both.
 - **Bayer:** `processing.py` has no display conversion for Bayer. `ArenaCamera` already delivers RGB8 via the SDK, and doing it in OpenCV risks a wrong Bayer-phase mapping.
 - **Fonts:** Dear PyGui's default font has no `●` glyph, so `theme.load_font()` loads Segoe UI. Glyph ranges are automatic in DPG 2.x; `add_font_range*` is a deprecated no-op.
-- **`CameraControlsPanel`** (sidebar): controls are enabled or disabled from the snapshot's capabilities, and it never refreshes a field the user is editing (`dpg.is_item_active`).
 - **GIL contention:** with 4 simulators and a fast UI loop, the simulators drop to about 24 FPS because they share the GIL with the render loop (they spend CPU drawing test patterns). Measure real-camera throughput before optimising; if needed, move display conversion off the UI thread or into worker processes.
 - **Headless screenshots:** `dpg.output_frame_buffer()` can occasionally capture an all-black frame if the window is occluded. Re-run before concluding that rendering broke.
 
@@ -183,10 +182,12 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 
 - **Sidebar rows:** `CameraSidebar` holds one `CameraRow` (`app/ui/camera_row.py`) per camera.
   - The header shows disclosure arrow · state dot · `Model (Serial)` · IP · `···` menu.
-  - The expandable panel holds that camera's acquisition toggle, video recording (format + record), image capture (format + capture), Property Grid button and stats.
-  - Every control acts on its own camera only.
-  - The toggle shows the real state from `CameraManager` every frame. Start/stop runs on a worker thread, so one camera connecting never blocks another.
-  - Stopping acquisition finishes that camera's recording first.
+  - The expandable panel holds that camera's **power toggle (ON/OFF = open/close the camera)** with a separate **► / ■ stream button** in the same row, video recording (format + record), image capture (format + capture), Property Grid button and stats.
+  - Power and streaming are deliberately separate. With the camera ON but not streaming, settings the camera locks during acquisition (pixel format, ROI, ...) can be changed in the Property Grid.
+  - Every control acts on its own camera only and shows the real state from `CameraManager` every frame. Open/close/start/stop run on a worker thread, so one camera never blocks another.
+  - Stopping the stream or turning the camera off finishes that camera's recording first. Record and Capture need a running stream.
+  - The `···` menu also has Save settings as profile / Apply profile.
+- **Removed on request:** the old "Camera Settings" sidebar panel (exposure/gain/FPS/format/ROI) and Start all / Stop all (buttons and menu items). The Property Grid covers those settings. `CameraControlService` stays, because profiles and sessions use it.
 - **Per-camera recording:**
   - `RecordingService` runs several sessions at once. `start(mode, [id])` and `stop([id])` affect only those cameras, and a camera is in at most one active session.
   - `camera_recording(id)` gives the per-row state. The toolbar's Record/Stop still means "all streaming cameras not already recording" / "everything".

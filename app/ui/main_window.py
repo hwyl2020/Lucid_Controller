@@ -14,7 +14,6 @@ from app.services.app_services import AppServices
 from app.services.configuration import save_config
 from app.services.diagnostics import export_diagnostics
 from app.ui import dialogs
-from app.ui.camera_controls import CameraControlsPanel
 from app.ui.camera_sidebar import CameraSidebar
 from app.ui.log_panel import LogPanel
 from app.ui.multiview import MultiView
@@ -62,9 +61,6 @@ class MainWindow:
                         dpg.add_menu_item(label="Dark", callback=lambda: self.set_theme("dark", persist=True))
                         dpg.add_menu_item(label="Light", callback=lambda: self.set_theme("light", persist=True))
                 with dpg.menu(label="Cameras"):
-                    dpg.add_menu_item(label="Start all", callback=lambda: self._sidebar.start_all())
-                    dpg.add_menu_item(label="Stop all", callback=lambda: self._sidebar.stop_all())
-                    dpg.add_separator()
                     self._reconnect_item = dpg.add_menu_item(
                         label="Auto-reconnect",
                         check=True,
@@ -86,10 +82,8 @@ class MainWindow:
                 with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8) as sidebar:
                     self._sidebar_window = sidebar
                     self._sidebar = CameraSidebar(
-                        sidebar, self._manager, services.statuses, services.recording, self.open_property_grid
-                    )
-                    self._controls = CameraControlsPanel(
-                        sidebar, self._manager, services.controls, services.profiles, wrap=SIDEBAR_WIDTH - 30
+                        sidebar, self._manager, services.statuses, services.recording, services.profiles,
+                        self.open_property_grid,
                     )
                 with dpg.child_window(width=-1, height=-STATUS_HEIGHT - 8, no_scrollbar=True) as area:
                     self._area_window = area
@@ -121,7 +115,6 @@ class MainWindow:
         """Called once per rendered frame from the UI thread."""
         self._toolbar.update()
         self._sidebar.update()
-        self._controls.update(self._sidebar.selected)
         self._multiview.update()
         self._status_panel.update()
         self._log_panel.update()

@@ -1,11 +1,14 @@
 """One camera in the sidebar list: header line plus its own expandable control panel.
 
-Header:  [disclosure] [state dot] Model (Serial)  IP  [⋮]
-Panel (this camera only): acquisition toggle, video recording (format + record), image capture
-(format + capture), Property Grid button and live statistics.
+Header:  [disclosure] [state dot] Model (Serial)  IP  [···]
+Panel (this camera only): camera power toggle + stream button, video recording (format + record),
+image capture (format + capture), Property Grid button and live statistics.
 
-Every control acts on this row's camera only. The acquisition toggle always shows the camera's
-actual state (read every frame from CameraManager); start/stop runs on a worker thread so one
+Power and streaming are separate on purpose: with the camera ON but not streaming, settings that the
+camera locks during acquisition (pixel format, ROI, ...) can be changed in the Property Grid.
+
+Every control acts on this row's camera only and always shows the camera's actual state (read every
+frame from CameraManager). Opening/closing and starting/stopping run on a worker thread so one
 camera connecting never blocks another camera's controls.
 """
 
@@ -25,13 +28,19 @@ from app.models.camera_status import CameraStatus
 from app.recording.recorder import RecordingMode
 from app.recording.snapshot import IMAGE_FORMATS
 from app.services.camera_status_service import CameraStatusService
+from app.services.profile_service import ProfileService
 from app.services.recording_service import RecordingError, RecordingService
+from app.ui import dialogs
 from app.ui.theme import STATE_COLORS, TEXT_DIM, compact_table_theme, plain_button_theme, use_font
 
 logger = logging.getLogger(__name__)
 
 NAME_WIDTH = 190
 CONTROL_WIDTH = 118
+POWER_WIDTH = 78
+STREAM_WIDTH = 36
+PLAY, STOP = "\u25ba", "\u25a0"  # Segoe UI has U+25BA/U+25A0 (not U+25B6)
+PENDING_LABELS = {"open": "Opening\u2026", "close": "Closing\u2026", "start": "\u2026", "stop": "\u2026"}
 PANEL_TEXT_WRAP = 300
 DETAILS_REFRESH_S = 0.2
 ERROR_COLOR = STATE_COLORS[CameraState.ERROR]
@@ -65,6 +74,7 @@ class CameraRow:
         manager: CameraManager,
         statuses: CameraStatusService,
         recording: RecordingService,
+        profiles: ProfileService,
         on_select: Callable[[str], None],
         on_property_grid: Callable[[str], None],
     ) -> None:
@@ -72,10 +82,11 @@ class CameraRow:
         self._manager = manager
         self._statuses = statuses
         self._recording = recording
+        self._profiles = profiles
         self._on_select = on_select
         self._on_property_grid = on_property_grid
         self.expanded = False
-        self._pending: str | None = None  # "start" / "stop" while a worker thread is busy
+        self._pending: str | None = None  # "open" / "close" / "start" / "stop" while a worker is busy
         self._last_details = 0.0
         if CameraRow._themes is None or not dpg.does_item_exist(CameraRow._themes[0]):
             CameraRow._themes = _toggle_themes()
@@ -94,20 +105,31 @@ class CameraRow:
         with dpg.tooltip(self.name):
             dpg.add_text(f"{status.display_name}\nCamera ID: {self.camera_id}")
         with dpg.popup(self.menu_button, mousebutton=dpg.mvMouseButton_Left):
-            dpg.add_menu_item(label="Property Grid…", callback=lambda: self._on_property_grid(self.camera_id))
-            dpg.add_menu_item(label="Start / stop acquisition", callback=self.toggle_acquisition)
+            dpg.add_menu_item(label="Property Grid\u2026", callback=lambda: self._on_property_grid(self.camera_id))
+            dpg.add_menu_item(label="Turn camera on / off", callback=self.toggle_power)
+            dpg.add_menu_item(label="Start / stop streaming", callback=self.toggle_stream)
             dpg.add_menu_item(label="Capture image", callback=self.capture)
+            dpg.add_separator()
+            dpg.add_menu_item(label="Save settings as profile\u2026", callback=self._save_profile)
+            dpg.add_menu_item(label="Apply profile\u2026", callback=self._apply_profile)
+            dpg.add_separator()
             dpg.add_menu_item(label="Show controls", callback=lambda: self.set_expanded(True))
 
         with dpg.child_window(parent=parent, auto_resize_y=True, border=True, show=False) as self.panel:
             with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit, borders_innerH=False,
                            borders_outerH=False, borders_innerV=False, borders_outerV=False) as table:
                 dpg.add_table_column(width_stretch=True)
-                dpg.add_table_column(width_fixed=True, init_width_or_weight=CONTROL_WIDTH)
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=POWER_WIDTH + STREAM_WIDTH + 8)
                 with dpg.table_row():
-                    title = dpg.add_text("Acquisition")
-                    self.acq_button = dpg.add_button(label="OFF", width=CONTROL_WIDTH, callback=self.toggle_acquisition)
+                    title = dpg.add_text("Camera")
+                    with dpg.group(horizontal=True, horizontal_spacing=8):
+                        self.power_button = dpg.add_button(label="OFF", width=POWER_WIDTH, callback=self.toggle_power)
+                        self.stream_button = dpg.add_button(label=PLAY, width=STREAM_WIDTH, callback=self.toggle_stream)
                 use_font(title, "heading")
+                with dpg.tooltip(self.power_button):
+                    dpg.add_text("Turn the camera on (open it) or off (close it)")
+                with dpg.tooltip(self.stream_button):
+                    self.stream_tip = dpg.add_text("Start streaming")
             dpg.bind_item_theme(table, CameraRow._compact)
             self.acq_text = dpg.add_text("", color=TEXT_DIM, wrap=PANEL_TEXT_WRAP)
             dpg.add_separator()
@@ -147,40 +169,47 @@ class CameraRow:
     def set_selected(self, selected: bool) -> None:
         dpg.set_value(self.name, selected)
 
-    # --- acquisition ----------------------------------------------------------------
-    def toggle_acquisition(self) -> None:
-        if self._pending:
-            return
-        acquiring = self._manager.state(self.camera_id) is CameraState.ACQUIRING
-        self._pending = "stop" if acquiring else "start"
-        threading.Thread(target=self._run_acquisition, args=(not acquiring,), daemon=True,
-                         name=f"acq-toggle-{self.camera_id}").start()
-
-    def start(self) -> None:
-        if self._manager.state(self.camera_id) is not CameraState.ACQUIRING and not self._pending:
-            self.toggle_acquisition()
-
-    def stop(self) -> None:
-        if self._manager.state(self.camera_id) is CameraState.ACQUIRING and not self._pending:
-            self.toggle_acquisition()
+    # --- power / streaming -------------------------------------------------------------
+    @property
+    def camera_on(self) -> bool:
+        return self._manager.camera(self.camera_id).connected
 
     @property
     def busy(self) -> bool:
         return self._pending is not None
 
-    def _run_acquisition(self, start: bool) -> None:
+    def toggle_power(self) -> None:
+        """ON opens the camera (no streaming); OFF finishes recording, stops streaming, closes it."""
+        if not self._pending:
+            self._run("close" if self.camera_on else "open")
+
+    def toggle_stream(self) -> None:
+        if self._pending or not self.camera_on:
+            return
+        acquiring = self._manager.state(self.camera_id) is CameraState.ACQUIRING
+        self._run("stop" if acquiring else "start")
+
+    def _run(self, action: str) -> None:
+        self._pending = action
+        threading.Thread(target=self._do, args=(action,), daemon=True, name=f"{action}-{self.camera_id}").start()
+
+    def _do(self, action: str) -> None:
+        cid = self.camera_id
         try:
-            if start:
-                if self._manager.state(self.camera_id) in (CameraState.DISCONNECTED, CameraState.ERROR):
-                    self._manager.stop_streaming(self.camera_id)
-                    self._manager.connect(self.camera_id)
-                self._manager.start_streaming(self.camera_id)
-            else:
-                if self._recording.is_recording(self.camera_id):
-                    self._recording.stop([self.camera_id])  # finish the file before the stream stops
-                self._manager.stop_streaming(self.camera_id)
+            if action == "open":
+                self._manager.stop_streaming(cid)  # clears a failed stream, if any
+                self._manager.connect(cid)
+            elif action == "start":
+                self._manager.start_streaming(cid)
+            else:  # "stop" or "close": finish the recording file before the stream goes away
+                if self._recording.is_recording(cid):
+                    self._recording.stop([cid])
+                if action == "stop":
+                    self._manager.stop_streaming(cid)
+                else:
+                    self._manager.disconnect(cid)
         except CameraError as exc:
-            logger.error("Could not %s %s: %s", "start" if start else "stop", self.camera_id, exc)
+            logger.error("Could not %s %s: %s", action, cid, exc)
         finally:
             self._pending = None
 
@@ -214,14 +243,23 @@ class CameraRow:
     def update(self) -> None:
         state = self._manager.state(self.camera_id)
         acquiring = state is CameraState.ACQUIRING
+        camera_on = self.camera_on
         dpg.configure_item(self.dot, color=STATE_COLORS[state])
         on, off, rec = CameraRow._themes
-        if self._pending:
-            dpg.configure_item(self.acq_button, label="Starting…" if self._pending == "start" else "Stopping…",
-                               enabled=False)
+        pending = self._pending
+        if pending in ("open", "close"):
+            dpg.configure_item(self.power_button, label=PENDING_LABELS[pending], enabled=False)
         else:
-            dpg.configure_item(self.acq_button, label="ON" if acquiring else "OFF", enabled=True)
-            dpg.bind_item_theme(self.acq_button, on if acquiring else off)
+            dpg.configure_item(self.power_button, label="ON" if camera_on else "OFF", enabled=pending is None)
+            dpg.bind_item_theme(self.power_button, on if camera_on else off)
+        if pending in ("start", "stop"):
+            dpg.configure_item(self.stream_button, label=PENDING_LABELS[pending], enabled=False)
+        else:
+            dpg.configure_item(self.stream_button, label=STOP if acquiring else PLAY,
+                               enabled=camera_on and pending is None)
+            dpg.bind_item_theme(self.stream_button, on if acquiring else 0)
+            dpg.set_value(self.stream_tip, "Stop streaming" if acquiring else
+                          ("Start streaming" if camera_on else "Turn the camera on first"))
         recording = self._recording.is_recording(self.camera_id)
         dpg.configure_item(self.rec_button, label="■ Stop" if recording else "● Record", enabled=acquiring or recording)
         dpg.bind_item_theme(self.rec_button, rec if recording else 0)
@@ -236,12 +274,13 @@ class CameraRow:
         dpg.set_value(self.ip, status.ip_address or "No IP")
         if not self.expanded:
             return
-        connection = "Connected" if status.connected else "Disconnected"
-        activity = "acquiring" if acquiring else "stopped"
         if status.error:
             self._set_text(self.acq_text, status.error, error=True)
+        elif not camera_on:
+            self._set_text(self.acq_text, "Camera off")
         else:
-            self._set_text(self.acq_text, f"{connection} · {activity}")
+            self._set_text(self.acq_text, "Camera on \u00b7 streaming" if acquiring else
+                           "Camera on \u00b7 not streaming (stream-locked settings can be changed)")
         current = self._recording.camera_recording(self.camera_id)
         if current is not None:
             minutes, seconds = divmod(int(current.elapsed_s), 60)
@@ -250,7 +289,32 @@ class CameraRow:
             self._set_text(self.rec_text, f"● REC {minutes:02d}:{seconds:02d} · {st.frames_written:,} frames"
                            f" · {dropped} dropped", error=bool(dropped or st.error))
         dpg.set_value(self.stats_text, f"{status.bandwidth_mbps:,.1f} Mb/s · {status.fps:.2f} FPS · "
-                      f"{status.frame_count:,} frames" if acquiring else "Not acquiring")
+                      f"{status.frame_count:,} frames" if acquiring else "Not streaming")
+
+    # --- profiles (menu) ---------------------------------------------------------------
+    def _save_profile(self) -> None:
+        def save(name: str) -> None:
+            try:
+                path = self._profiles.save(self.camera_id, name)
+            except (CameraError, OSError, ValueError) as exc:
+                dialogs.message("Save profile", str(exc))
+                return
+            dialogs.message("Save profile", f"Profile \u201c{name.strip()}\u201d saved to {path}")
+        dialogs.prompt_text("Save profile", "Profile name", save)
+
+    def _apply_profile(self) -> None:
+        def apply(name: str) -> None:
+            try:
+                warnings = self._profiles.apply(self.camera_id, name)
+            except CameraError as exc:
+                dialogs.message("Apply profile", str(exc))
+                return
+            text = f"Profile \u201c{name}\u201d applied."
+            if warnings:
+                text += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
+            dialogs.message("Apply profile", text)
+        dialogs.choose("Apply profile", "Profile", self._profiles.list_profiles(), apply,
+                       empty_text="No saved profiles yet. Use \u201cSave settings as profile\u201d first.")
 
     @staticmethod
     def _set_text(item, text: str, error: bool = False) -> None:

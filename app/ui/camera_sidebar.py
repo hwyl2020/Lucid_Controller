@@ -1,5 +1,4 @@
-"""Camera list: one CameraRow per detected camera (each with its own expandable controls), plus
-Start all / Stop all. Tracks the selected camera for the settings panel below the list."""
+"""Camera list: one CameraRow per detected camera, each with its own expandable controls."""
 
 from __future__ import annotations
 
@@ -9,6 +8,7 @@ import dearpygui.dearpygui as dpg
 
 from app.cameras.camera_manager import CameraManager
 from app.services.camera_status_service import CameraStatusService
+from app.services.profile_service import ProfileService
 from app.services.recording_service import RecordingService
 from app.ui.camera_row import CameraRow
 from app.ui.theme import TEXT_DIM, use_font
@@ -21,6 +21,7 @@ class CameraSidebar:
         manager: CameraManager,
         statuses: CameraStatusService,
         recording: RecordingService,
+        profiles: ProfileService,
         on_property_grid: Callable[[str], None],
     ) -> None:
         self._manager = manager
@@ -34,16 +35,11 @@ class CameraSidebar:
             dpg.add_text("No cameras discovered", color=TEXT_DIM, parent=parent)
         for status in statuses.statuses():
             self.rows[status.camera_id] = CameraRow(
-                parent, status, manager, statuses, recording, on_select=self.select, on_property_grid=on_property_grid
+                parent, status, manager, statuses, recording, profiles,
+                on_select=self.select, on_property_grid=on_property_grid,
             )
             dpg.add_spacer(height=2, parent=parent)
 
-        dpg.add_spacer(height=4, parent=parent)
-        with dpg.group(horizontal=True, parent=parent):
-            dpg.add_button(label="Start all", width=150, callback=self.start_all)
-            dpg.add_button(label="Stop all", width=150, callback=self.stop_all)
-
-        # The settings panel below acts on the selection; preselect the first camera.
         if self.rows:
             self.select(next(iter(self.rows)))
 
@@ -55,14 +51,6 @@ class CameraSidebar:
         self.selected = camera_id
         for cid, row in self.rows.items():
             row.set_selected(cid == camera_id)
-
-    def start_all(self) -> None:
-        for row in self.rows.values():
-            row.start()
-
-    def stop_all(self) -> None:
-        for row in self.rows.values():
-            row.stop()
 
     @property
     def busy(self) -> bool:
