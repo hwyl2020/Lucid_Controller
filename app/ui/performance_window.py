@@ -7,10 +7,11 @@ from collections.abc import Callable
 import dearpygui.dearpygui as dpg
 
 from app.models.camera_state import CameraState
+from app.models.units import format_mbps
 from app.services.performance_monitor import PerformanceMonitor
 from app.ui.theme import STATE_COLORS, TEXT_DIM
 
-COLUMNS = ("Camera", "State", "Cam FPS", "Disp FPS", "MB/s", "Missed", "Timeouts", "NIC", "Rec queue", "Rec dropped")
+COLUMNS = ("Camera", "State", "Cam FPS", "Disp FPS", "Mb/s", "Missed", "Timeouts", "NIC", "Rec queue", "Rec dropped")
 WARN = STATE_COLORS[CameraState.ERROR]
 THEME_TEXT = (-255, 0, 0, 255)  # Dear PyGui sentinel: use the theme's text colour
 
@@ -51,33 +52,36 @@ class PerformanceWindow:
             self._host,
             f"CPU {host.cpu_percent:.0f}% (app {host.process_cpu_percent:.0f}%)   "
             f"RAM {host.memory_percent:.0f}% (app {host.process_memory_mb:,.0f} MB)   "
-            f"Disk write {host.disk_write_mb_s:.1f} MB/s (recording {host.recording_write_mb_s:.1f} MB/s)   "
+            f"Disk write {format_mbps(host.disk_write_mbps)} (recording {format_mbps(host.recording_write_mbps)})   "
             f"UI {self._ui_fps():.0f} FPS",
         )
-        busy = {nic: rate for nic, rate in host.nic_rx_mb_s.items() if rate >= 0.05}
-        dpg.set_value(self._nics, "Network receive: " + (", ".join(f"{n} {r:.1f} MB/s" for n, r in sorted(busy.items())) or "idle"))
+        busy = {nic: rate for nic, rate in host.nic_rx_mbps.items() if rate >= 0.5}
+        dpg.set_value(
+            self._nics, "Network receive: " + (", ".join(f"{n} {format_mbps(r)}" for n, r in sorted(busy.items())) or "idle")
+        )
 
         for cam in sample.cameras:
-            cells = self._rows.get(cam.camera_id)
+            st = cam.status
+            cells = self._rows.get(st.camera_id)
             if cells is None:
                 with dpg.table_row(parent=self._table):
                     cells = [dpg.add_text("") for _ in COLUMNS]
-                self._rows[cam.camera_id] = cells
-            streaming = cam.state is CameraState.ACQUIRING
+                self._rows[st.camera_id] = cells
+            streaming = st.acquiring
             values = (
-                cam.camera_id,
-                cam.state.value + (" ● REC" if cam.recording else ""),
-                f"{cam.camera_fps:.1f}" if streaming else "-",
-                f"{self._display_fps(cam.camera_id):.1f}" if streaming else "-",
-                f"{cam.throughput_mb_s:.1f}" if streaming else "-",
-                str(cam.frames_missed),
-                str(cam.timeouts),
+                st.display_name,
+                st.state.value + (" ● REC" if cam.recording else ""),
+                f"{st.fps:.1f}" if streaming else "-",
+                f"{self._display_fps(st.camera_id):.1f}" if streaming else "-",
+                f"{st.bandwidth_mbps:,.1f}" if streaming else "-",
+                str(st.frames_missed),
+                str(st.timeouts),
                 cam.nic or "-",
                 str(cam.recording_queue_depth) if cam.recording else "-",
                 str(cam.recording_dropped) if cam.recording else "-",
             )
             for cell, value in zip(cells, values):
                 dpg.set_value(cell, value)
-            dpg.configure_item(cells[1], color=STATE_COLORS[cam.state])
-            dpg.configure_item(cells[5], color=WARN if cam.frames_missed else THEME_TEXT)
+            dpg.configure_item(cells[1], color=STATE_COLORS[st.state])
+            dpg.configure_item(cells[5], color=WARN if st.frames_missed else THEME_TEXT)
             dpg.configure_item(cells[9], color=WARN if cam.recording_dropped else THEME_TEXT)

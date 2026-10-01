@@ -1,8 +1,8 @@
 """Per-camera recorder: drains a RecordingQueue on its own thread into a frame writer.
 
 Raw mode (primary) appends frames losslessly to ``frames.raw`` with a ``frames.csv`` index, at full
-resolution and native pixel format (e.g. raw BayerRG8). Measured on the dev PC: ~1 GB/s sequential
-write vs ~110 MB/s from a 12 MP camera at 9 FPS. Use ``read_raw_sequence`` to read it back.
+resolution and native pixel format (e.g. raw BayerRG8). Measured on the dev PC: ~8,300 Mb/s sequential
+write vs ~890 Mb/s from a 12 MP camera at 9 FPS. Use ``read_raw_sequence`` to read it back.
 """
 
 from __future__ import annotations

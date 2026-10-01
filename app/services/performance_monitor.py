@@ -1,7 +1,8 @@
 """Performance metrics: per-camera acquisition/recording figures and host CPU, RAM, NIC, disk.
 
 ``sample()`` is cheap to call every UI frame: host counters are re-read at most once per interval
-and rates are computed from counter deltas.
+and rates are computed from counter deltas. All data rates are megabits per second (Mb/s).
+Per-camera acquisition figures come from CameraStatusService rather than being recomputed here.
 """
 
 from __future__ import annotations
@@ -14,22 +15,17 @@ from dataclasses import dataclass, field
 import psutil
 
 from app.cameras.camera_manager import CameraManager
-from app.models.camera_state import CameraState
+from app.models.camera_status import CameraStatus
+from app.models.units import bytes_per_second_to_mbps
+from app.services.camera_status_service import CameraStatusService
 from app.services.recording_service import RecordingService
 
 logger = logging.getLogger(__name__)
 
-MB = 1e6
-
 
 @dataclass(frozen=True)
 class CameraPerf:
-    camera_id: str
-    state: CameraState
-    camera_fps: float = 0.0
-    throughput_mb_s: float = 0.0
-    frames_missed: int = 0
-    timeouts: int = 0
+    status: CameraStatus
     nic: str | None = None
     recording: bool = False
     recording_queue_depth: int = 0
@@ -40,11 +36,11 @@ class CameraPerf:
 class HostPerf:
     cpu_percent: float = 0.0  # whole machine
     process_cpu_percent: float = 0.0  # this app; can exceed 100 on multi-core
-    process_memory_mb: float = 0.0
+    process_memory_mb: float = 0.0  # resident memory, megabytes
     memory_percent: float = 0.0  # whole machine
-    nic_rx_mb_s: dict[str, float] = field(default_factory=dict)
-    disk_write_mb_s: float = 0.0  # whole machine
-    recording_write_mb_s: float = 0.0  # this app's recorders
+    nic_rx_mbps: dict[str, float] = field(default_factory=dict)
+    disk_write_mbps: float = 0.0  # whole machine
+    recording_write_mbps: float = 0.0  # this app's recorders
 
 
 @dataclass(frozen=True)
@@ -54,9 +50,16 @@ class PerformanceSample:
 
 
 class PerformanceMonitor:
-    def __init__(self, manager: CameraManager, recording: RecordingService | None = None, interval: float = 1.0) -> None:
+    def __init__(
+        self,
+        manager: CameraManager,
+        recording: RecordingService | None = None,
+        interval: float = 1.0,
+        statuses: CameraStatusService | None = None,
+    ) -> None:
         self._manager = manager
         self._recording = recording
+        self._statuses = statuses or CameraStatusService(manager)
         self._interval = interval
         self._process = psutil.Process()
         self._process.cpu_percent(None)  # prime: the first call always returns 0
@@ -88,34 +91,29 @@ class PerformanceMonitor:
         disk = self._disk_write_bytes()
         recorded = self._recorded_bytes()
         nic_rates = {
-            nic: (rx - self._last_net.get(nic, rx)) / elapsed / MB
+            nic: bytes_per_second_to_mbps((rx - self._last_net.get(nic, rx)) / elapsed)
             for nic, rx in net.items()
         }
+        disk_rate = (disk - self._last_disk) / elapsed if disk is not None and self._last_disk is not None else 0.0
         host = HostPerf(
             cpu_percent=psutil.cpu_percent(None),
             process_cpu_percent=self._process.cpu_percent(None),
-            process_memory_mb=self._process.memory_info().rss / MB,
+            process_memory_mb=self._process.memory_info().rss / 1e6,
             memory_percent=psutil.virtual_memory().percent,
-            nic_rx_mb_s={nic: rate for nic, rate in nic_rates.items() if rate >= 0},
-            disk_write_mb_s=max(0.0, (disk - self._last_disk) / elapsed / MB) if disk is not None and self._last_disk is not None else 0.0,
-            recording_write_mb_s=max(0.0, (recorded - self._last_recorded) / elapsed / MB),
+            nic_rx_mbps={nic: rate for nic, rate in nic_rates.items() if rate >= 0},
+            disk_write_mbps=max(0.0, bytes_per_second_to_mbps(disk_rate)),
+            recording_write_mbps=max(0.0, bytes_per_second_to_mbps((recorded - self._last_recorded) / elapsed)),
         )
         self._last_time, self._last_net, self._last_disk, self._last_recorded = now, net, disk, recorded
         return host
 
     def _camera_perf(self, camera_id: str) -> CameraPerf:
-        camera = self._manager.camera(camera_id)
-        stats = self._manager.stats(camera_id)
+        status = self._statuses.status(camera_id)
         rec_status = self._recording.status() if self._recording is not None else None
         rec = rec_status.cameras.get(camera_id) if rec_status is not None and rec_status.active else None
         return CameraPerf(
-            camera_id=camera_id,
-            state=self._manager.state(camera_id),
-            camera_fps=stats.measured_fps if stats else 0.0,
-            throughput_mb_s=stats.throughput_mb_s if stats else 0.0,
-            frames_missed=stats.frames_missed if stats else 0,
-            timeouts=stats.timeouts if stats else 0,
-            nic=self.camera_nic(camera.ip_address),
+            status=status,
+            nic=self.camera_nic(status.ip_address),
             recording=rec is not None,
             recording_queue_depth=rec.queue_depth if rec else 0,
             recording_dropped=(rec.queue_overflows + rec.frame_gaps) if rec else 0,

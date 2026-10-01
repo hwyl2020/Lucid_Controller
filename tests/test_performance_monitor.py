@@ -37,11 +37,11 @@ def test_samples_camera_and_host(manager):
     manager.start_streaming("SIM")
     time.sleep(1.3)  # one full FPS window
     sample = monitor.sample()
-    cam = sample.cameras[0]
+    cam = sample.cameras[0].status
     assert cam.state is CameraState.ACQUIRING
-    assert 30 < cam.camera_fps < 70
-    expected_mb_s = cam.camera_fps * 320 * 240 / 1e6
-    assert cam.throughput_mb_s == pytest.approx(expected_mb_s, rel=0.3)
+    assert 30 < cam.fps < 70
+    expected_mbps = cam.fps * 320 * 240 * 8 / 1e6  # Mono8 = 1 byte/pixel, shown in megabits
+    assert cam.bandwidth_mbps == pytest.approx(expected_mbps, rel=0.3)
     assert cam.frames_missed == 0
     host = sample.host
     assert host.process_memory_mb > 10
