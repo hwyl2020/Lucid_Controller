@@ -23,7 +23,7 @@ class FeatureService:
     def tree(self, camera_id: str) -> FeatureCategory:
         camera = self._manager.camera(camera_id)
         if not camera.connected:
-            raise CameraNotConnectedError("Start the camera to read its features")
+            raise CameraNotConnectedError("The camera is off. Turn it on (ON) to read and change its features")
         tree = camera.feature_tree()
         if tree is None:
             raise UnsupportedFeatureError(f"{camera_id}: this camera does not expose a feature tree")

@@ -97,3 +97,15 @@ def test_recording_queue_receives_every_frame(manager):
 def test_setters_on_disconnected_camera_raise(manager):
     with pytest.raises(CameraNotConnectedError):
         manager.camera("SIM-0").set_exposure(1000)
+
+
+def test_stop_streaming_returns_only_after_camera_stopped(manager):
+    """State must not report CONNECTED while the camera still holds its stream locks."""
+    camera = manager.camera("SIM-0")
+    manager.connect("SIM-0")
+    manager.start_streaming("SIM-0")
+    assert wait_for(lambda: manager.latest_frame("SIM-0") is not None)
+    manager.stop_streaming("SIM-0")
+    assert not camera.acquiring  # stop_acquisition already ran
+    assert manager.state("SIM-0") is CameraState.CONNECTED
+    camera.set_pixel_format("RGB8")  # stream-locked setting is writable immediately

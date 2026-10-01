@@ -89,11 +89,22 @@ class CameraManager:
         worker.start()
 
     def stop_streaming(self, camera_id: str) -> None:
+        """Stop the stream and return once the camera has actually stopped.
+
+        The worker stays registered until its thread has finished (stop_acquisition included), so
+        state() keeps reporting ACQUIRING until the camera has released its stream locks
+        (e.g. TLParamsLocked on LUCID cameras); observers then see CONNECTED only when stream-locked
+        features are writable again.
+        """
         with self._lock:
             self._wanted_streaming.discard(camera_id)
-            worker = self._workers.pop(camera_id, None)
-        if worker is not None:
-            worker.stop()
+            worker = self._workers.get(camera_id)
+        if worker is None:
+            return
+        worker.stop()
+        with self._lock:
+            if self._workers.get(camera_id) is worker:
+                del self._workers[camera_id]
 
     def reconnect(self, camera_id: str) -> None:
         """Re-open a camera after a failure and resume streaming if it was streaming.

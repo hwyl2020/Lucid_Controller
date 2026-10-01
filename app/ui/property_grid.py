@@ -1,8 +1,9 @@
 """Floating, camera-specific Property Grid: browse and edit every feature the camera exposes.
 
 One window per camera (several may be open at once). The feature tree is read through
-FeatureService on a background thread (a real camera means hundreds of network reads) and rebuilt
-after every change so dependent values, ranges and access modes stay truthful.
+FeatureService on a background thread (a real camera means hundreds of network reads) and re-read
+after every change and whenever the camera's state changes (on/off, streaming started/stopped),
+because the camera locks some features while streaming; this keeps access modes truthful.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from app.cameras.camera_device import CameraError
 from app.models.camera_state import CameraState
 from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
 from app.services.feature_service import FeatureService, matches
-from app.ui.theme import STATE_COLORS, TEXT_DIM, compact_table_theme, use_font
+from app.ui.theme import STATE_COLORS, TEXT_DIM, WARNING_COLOR, compact_table_theme, use_font
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +55,16 @@ def feature_tooltip(feature: Feature) -> str:
 
 class PropertyGridWindow:
     def __init__(self, camera_id: str, title: str, features: FeatureService, on_close: Callable[[str], None],
-                 pos: tuple[int, int] = (220, 90)) -> None:
+                 state_of: Callable[[str], CameraState], pos: tuple[int, int] = (220, 90)) -> None:
         self.camera_id = camera_id
         self._features = features
+        self._state_of = state_of
+        self._last_state = state_of(camera_id)
         self._on_close = on_close
         self._lock = threading.Lock()
         self._pending: tuple[FeatureCategory | None, str | None] | None = None  # (tree, error) from loader
         self._loading = False
+        self._reload_again = False
         self._tree: FeatureCategory | None = None
         self._rows: dict[str, tuple[Feature, int | str]] = {}  # name -> (feature, table row)
         self._categories: list[tuple[int | str, list[str], list]] = []  # (tree_node, feature names, child nodes)
@@ -78,6 +82,10 @@ class PropertyGridWindow:
                                                  callback=lambda: self._apply_filter())
                 dpg.add_button(label="Refresh", callback=lambda: self.reload())
             self._message = dpg.add_text("Loading features…", color=TEXT_DIM, wrap=630)
+            self._streaming_hint = dpg.add_text(
+                "Streaming: features the camera locks during acquisition (e.g. Pixel Format, Width, Height) "
+                "are read-only. Stop the stream with ■ (the camera stays on) to change them.",
+                color=WARNING_COLOR, wrap=630, show=self._last_state is CameraState.ACQUIRING)
             self._body = dpg.add_child_window(border=True)
         self.reload()
 
@@ -98,30 +106,46 @@ class PropertyGridWindow:
     def reload(self) -> None:
         with self._lock:
             if self._loading:
+                # A load is already reading the camera; its result may predate this request (e.g. the
+                # stream stopped mid-read), so read once more when it finishes.
+                self._reload_again = True
                 return
             self._loading = True
         threading.Thread(target=self._load, name=f"features-{self.camera_id}", daemon=True).start()
 
     def _load(self) -> None:
-        try:
-            result = (self._features.tree(self.camera_id), None)
-        except CameraError as exc:
-            result = (None, str(exc))
-        except Exception as exc:  # noqa: BLE001 - shown in the window, never crashes the app
-            logger.exception("Reading features of %s failed", self.camera_id)
-            result = (None, f"Reading features failed: {exc}")
-        with self._lock:
-            self._pending = result
-            self._loading = False
+        while True:
+            try:
+                result = (self._features.tree(self.camera_id), None)
+            except CameraError as exc:
+                result = (None, str(exc))
+            except Exception as exc:  # noqa: BLE001 - shown in the window, never crashes the app
+                logger.exception("Reading features of %s failed", self.camera_id)
+                result = (None, f"Reading features failed: {exc}")
+            with self._lock:
+                self._pending = result
+                if not self._reload_again:
+                    self._loading = False
+                    return
+                self._reload_again = False
 
     def update(self) -> None:
-        """Called each UI frame: applies a finished background load on the UI thread."""
+        """Called each UI frame: reloads on camera state changes; applies finished loads."""
+        state = self._state_of(self.camera_id)
+        if state is not self._last_state:
+            self._last_state = state
+            dpg.configure_item(self._streaming_hint, show=state is CameraState.ACQUIRING)
+            self.reload()  # access modes change when streaming starts/stops or the camera turns off
         with self._lock:
             pending, self._pending = self._pending, None
         if pending is None:
             return
         tree, error = pending
         if error:
+            # Never leave stale editors around (e.g. after the camera was turned off).
+            self._tree = None
+            dpg.delete_item(self._body, children_only=True)
+            self._rows, self._categories = {}, []
             self._show(error, error=True)
             return
         self._tree = tree

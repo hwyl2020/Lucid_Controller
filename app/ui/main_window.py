@@ -227,6 +227,7 @@ class MainWindow:
             f"{camera.model} ({camera.serial_number})",
             self._services.features,
             on_close=lambda cid: self._property_grids.pop(cid, None),
+            state_of=self._manager.state,
             pos=(SIDEBAR_WIDTH + 40 + offset, 90 + offset),
         )
 
