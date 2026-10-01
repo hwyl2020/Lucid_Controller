@@ -6,3 +6,5 @@ recordings/
 snapshots/
 logs/
 config.json
+sessions/
+diagnostics/
