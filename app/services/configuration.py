@@ -17,7 +17,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "recording": {
         "directory": "recordings",
-        "format": "mp4",
+        "mode": "raw",  # "raw" (lossless, full resolution) or "video" (half-resolution MP4)
+        "queue_frames": 64,  # per camera; 64 x 12 MP BayerRG8 is ~780 MB of RAM
+        "min_free_gb": 2.0,  # recording stops before the disk fills up
+    },
+    "snapshots": {
+        "directory": "snapshots",
     },
     "logging": {
         "directory": "logs",

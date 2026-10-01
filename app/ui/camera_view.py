@@ -10,6 +10,7 @@ import numpy as np
 
 from app.acquisition.processing import PixelConversionError, to_display_rgba
 from app.cameras.camera_manager import CameraManager
+from app.services.recording_service import RecordingService
 from app.models.camera_state import CameraState
 from app.ui.theme import STATE_COLORS, TEXT_DIM
 
@@ -72,15 +73,19 @@ class CameraView:
         dpg.configure_item(self._info, pos=(10, height - FOOTER_HEIGHT))
         self._layout_image()
 
-    def update(self, manager: CameraManager) -> None:
+    def update(self, manager: CameraManager, recording: RecordingService | None = None) -> None:
         if self.camera_id is None:
             dpg.set_value(self._state, "")
             dpg.set_value(self._info, "")
             return
 
         state = manager.state(self.camera_id)
-        dpg.set_value(self._state, f"● {state.value}")
-        dpg.configure_item(self._state, color=STATE_COLORS[state])
+        if state is CameraState.ACQUIRING and recording is not None and recording.is_recording(self.camera_id):
+            dpg.set_value(self._state, "● REC")
+            dpg.configure_item(self._state, color=STATE_COLORS[CameraState.ERROR])
+        else:
+            dpg.set_value(self._state, f"● {state.value}")
+            dpg.configure_item(self._state, color=STATE_COLORS[state])
 
         frame = manager.latest_frame(self.camera_id)
         if frame is not None:

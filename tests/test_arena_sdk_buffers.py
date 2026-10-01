@@ -98,3 +98,26 @@ def test_bayer_preview_matches_sdk_conversion(make_buffer):
     for channel in range(3):
         diff = np.abs(sdk_half[inner][..., channel] - preview[inner][..., channel]).mean()
         assert diff < 6, f"channel {channel} differs from SDK demosaic by {diff:.1f} on average"
+
+
+@pytest.mark.parametrize("phase", ["RG", "GR", "GB", "BG"])
+def test_full_resolution_demosaic_matches_sdk(make_buffer, phase):
+    """processing.to_rgb8 maps GenICam Bayer names to the right (swapped) OpenCV codes."""
+    from app.acquisition.frame import Frame
+    from app.acquisition.processing import to_rgb8
+
+    yy, xx = np.mgrid[0:64, 0:64] / 64.0
+    scene = np.stack([220 * xx, 160 * yy, 120 * (1 - xx)], axis=-1)
+    sites = {"RG": "RGGB", "GR": "GRBG", "GB": "GBRG", "BG": "BGGR"}[phase]
+    channel = {"R": 0, "G": 1, "B": 2}
+    raw = np.zeros((64, 64), np.uint8)
+    for (y, x), colour in zip(((0, 0), (0, 1), (1, 0), (1, 1)), sites):
+        raw[y::2, x::2] = scene[y::2, x::2, channel[colour]]
+
+    converted = SDK.buffer_factory.convert(make_buffer(raw, f"Bayer{phase}8"), SDK.enums.PixelFormat.RGB8)
+    try:
+        reference = _copy_pixels(converted, np.uint8, 3).astype(float)
+    finally:
+        SDK.buffer_factory.destroy(converted)
+    ours = to_rgb8(Frame("t", 1, 0.0, 64, 64, f"Bayer{phase}8", raw)).astype(float)
+    assert np.abs(ours[4:-4, 4:-4] - reference[4:-4, 4:-4]).mean() < 1.0

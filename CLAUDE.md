@@ -117,6 +117,21 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **GIL contention:** with 4 simulators and a fast UI loop, the simulators drop to about 24 FPS because they share the GIL with the render loop (they spend CPU drawing test patterns). Measure real-camera throughput before optimising; if needed, move display conversion off the UI thread or into worker processes.
 - **Headless screenshots:** `dpg.output_frame_buffer()` can occasionally capture an all-black frame if the window is occluded. Re-run before concluding that rendering broke.
 
+### Recording and snapshots
+
+- **`RecordingService`** (`app/services/recording_service.py`) is the UI's entry point. It creates `recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_NN/` plus `session.json` (app version, mode, start/stop times, per-camera metadata and frame/drop counts).
+- **Disk space:** `status()` is polled every UI frame. It checks free space at most once a second and auto-stops below `recording.min_free_gb`.
+- **Per-camera pipeline:** `AcquisitionWorker` puts frames on a bounded `RecordingQueue`, and a `CameraRecorder` thread drains it into a writer.
+  - Queues are registered on `CameraManager` (`set_recording_queue`), not just on the worker, so recording survives the stream restarts done by pixel-format/ROI changes.
+  - `stop()` detaches the queues first, then drains and flushes everything already queued.
+  - Drops are counted, never silent: `queue_overflows` (app couldn't keep up) and `frame_gaps` (camera/transport drops, from frame-id jumps).
+- **Choosing a mode:** measured on this PC, disk writes reach about 1 GB/s against about 110 MB/s needed. mp4v encoding takes 92 ms per 12 MP frame (too slow for 9 FPS) or 22 ms at half resolution. Hence:
+  - **Raw** (default): lossless, native format (raw Bayer). `frames.raw` holds the data and `frames.csv` the index (offset, size, dtype, shape, id, timestamp). Read it back with `recorder.read_raw_sequence()`.
+  - **Video:** half-resolution MP4 (mp4v) plus `frames.csv`. It fails with a clear error if the frame size changes mid-recording.
+- **Snapshots** (`snapshot.py`) save a lossless raw PNG (16-bit for >8-bit formats), a full-resolution demosaiced RGB PNG, and a JSON sidecar. The source is `CameraManager.snapshot_frame()` (the worker's `last_frame`, which doesn't consume the display queue).
+- **Bayer naming:** OpenCV demosaic codes are swapped relative to GenICam: GenICam RG = OpenCV BG, and GR = GB. `processing._CV_DEMOSAIC` holds the mapping, verified against the SDK in `test_arena_sdk_buffers.py`.
+- **Verified on the TRI122S-C:** a 6 s raw recording gave 58 × 12 MP BayerRG8 frames, 0 gaps and 0 overflows. Snapshot colours were correct.
+
 ### Capability-driven GenICam
 
 Don't hard-code an exhaustive node list. Query what the connected camera supports:

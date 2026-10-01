@@ -7,10 +7,12 @@ import dearpygui.dearpygui as dpg
 from app.cameras.camera_manager import CameraManager
 from app.models.camera_state import CameraState
 from app.services.camera_control_service import CameraControlService
+from app.services.recording_service import RecordingService
 from app.ui.camera_controls import CameraControlsPanel
 from app.ui.camera_sidebar import CameraSidebar
 from app.ui.multiview import MultiView
 from app.ui.theme import STATE_COLORS, TEXT_DIM, create_theme, load_font
+from app.ui.toolbar import Toolbar, format_recording_status
 
 APP_TITLE = "LUCID Camera Studio"
 SIDEBAR_WIDTH = 300
@@ -19,8 +21,9 @@ STATUS_HEIGHT = 32
 
 
 class MainWindow:
-    def __init__(self, config: dict, manager: CameraManager) -> None:
+    def __init__(self, config: dict, manager: CameraManager, recording: RecordingService) -> None:
         self._manager = manager
+        self._recording = recording
         app_cfg = config["application"]
 
         with dpg.window(tag="main_window"):
@@ -29,6 +32,9 @@ class MainWindow:
                     dpg.add_text(APP_TITLE)
                     dpg.add_spacer(width=24)
                     self._header_status = dpg.add_text("", color=TEXT_DIM)
+                    dpg.add_spacer(width=24)
+                    with dpg.group() as toolbar_parent:
+                        self._toolbar = Toolbar(toolbar_parent, recording)
 
             with dpg.group(horizontal=True):
                 with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8) as sidebar:
@@ -37,7 +43,7 @@ class MainWindow:
                         sidebar, manager, CameraControlService(manager), wrap=SIDEBAR_WIDTH - 30
                     )
                 with dpg.child_window(width=-1, height=-STATUS_HEIGHT - 8, no_scrollbar=True) as area:
-                    self._multiview = MultiView(area, manager, app_cfg["default_layout"])
+                    self._multiview = MultiView(area, manager, app_cfg["default_layout"], recording)
 
             with dpg.child_window(height=STATUS_HEIGHT, border=False, no_scrollbar=True):
                 self._status = dpg.add_text("")
@@ -48,6 +54,7 @@ class MainWindow:
 
     def update(self) -> None:
         """Called once per rendered frame from the UI thread."""
+        self._toolbar.update()
         self._sidebar.update()
         self._controls.update(self._sidebar.selected)
         self._multiview.update()
@@ -73,5 +80,5 @@ class MainWindow:
         dpg.set_value(
             self._status,
             f"{len(camera_ids)} Cameras | {streaming} streaming | {total_fps:.1f} FPS"
-            f"{error_text} | Layout {self._multiview.layout} | Recording OFF",
+            f"{error_text} | Layout {self._multiview.layout} | {format_recording_status(self._toolbar.status)}",
         )

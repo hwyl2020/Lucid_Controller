@@ -5,6 +5,7 @@ from __future__ import annotations
 import dearpygui.dearpygui as dpg
 
 from app.cameras.camera_manager import CameraManager
+from app.services.recording_service import RecordingService
 from app.ui.camera_view import CameraView
 from app.ui.theme import TEXT_DIM
 
@@ -20,8 +21,11 @@ TILE_SPACING = 6
 
 
 class MultiView:
-    def __init__(self, parent: int | str, manager: CameraManager, layout: str = "2x2") -> None:
+    def __init__(
+        self, parent: int | str, manager: CameraManager, layout: str = "2x2", recording: RecordingService | None = None
+    ) -> None:
         self._manager = manager
+        self._recording = recording
         self._views: list[CameraView] = []
         self._rows: list[int | str] = []
         self._grid_size = (0, 0)
@@ -56,7 +60,7 @@ class MultiView:
             self._grid_size = (width, height)
             self._resize_tiles()
         for view in self._views:
-            view.update(self._manager)
+            view.update(self._manager, self._recording)
 
     def _build(self) -> None:
         for view in self._views:

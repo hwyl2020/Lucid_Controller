@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
+from app.acquisition.frame import Frame
 from app.acquisition.frame_queue import LatestFrameQueue, RecordingQueue
 from app.cameras.camera_device import CameraDevice, CameraError, FrameTimeoutError
 
@@ -45,6 +46,7 @@ class AcquisitionWorker:
         self._frame_timeout = frame_timeout
         self._on_error = on_error
         self.recording_queue: RecordingQueue | None = None  # attach/detach at any time
+        self.last_frame: Frame | None = None  # most recent frame, for snapshots
         self._stop_event = threading.Event()
         self._stats_lock = threading.Lock()
         self._stats = AcquisitionStats()
@@ -97,6 +99,7 @@ class AcquisitionWorker:
                         self._stats = replace(self._stats, timeouts=self._stats.timeouts + 1)
                     continue
 
+                self.last_frame = frame
                 self._display_queue.put(frame)
                 recording_queue = self.recording_queue
                 if recording_queue is not None:

@@ -16,6 +16,7 @@ from app.cameras.camera_manager import CameraManager
 from app.cameras.simulator_camera import PATTERNS, SimulatorCamera, SimulatorConfig
 from app.services.configuration import load_config
 from app.services.logging_service import setup_logging
+from app.services.recording_service import RecordingService
 from app.ui.main_window import APP_TITLE, MainWindow
 
 logger = logging.getLogger(__name__)
@@ -76,10 +77,12 @@ def main() -> None:
         logger.info("No Arena cameras found; adding %d simulator cameras", simulators)
     add_simulators(manager, simulators)
 
+    recording = RecordingService(manager, config)
+
     dpg.create_context()
     try:
         dpg.create_viewport(title=APP_TITLE, width=1400, height=860, min_width=900, min_height=600)
-        window = MainWindow(config, manager)
+        window = MainWindow(config, manager, recording)
         dpg.setup_dearpygui()
         dpg.show_viewport()
         frame_period = 1.0 / UI_MAX_FPS
@@ -92,6 +95,7 @@ def main() -> None:
             if remaining > 0:
                 time.sleep(remaining)
     finally:
+        recording.stop()  # flush and finalise session.json before cameras go away
         manager.shutdown()
         dpg.destroy_context()
         logger.info("Shut down")

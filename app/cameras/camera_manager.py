@@ -27,6 +27,8 @@ class CameraManager:
         self._workers: dict[str, AcquisitionWorker] = {}
         self._display_queues: dict[str, LatestFrameQueue] = {}
         self._errors: dict[str, str] = {}
+        # Kept here (not only on the worker) so recording survives stream restarts.
+        self._recording_queues: dict[str, RecordingQueue] = {}
 
     # --- registry ---------------------------------------------------------
     def add_camera(self, camera: CameraDevice) -> None:
@@ -78,6 +80,7 @@ class CameraManager:
                 frame_timeout=self._frame_timeout,
                 on_error=self._on_worker_error,
             )
+            worker.recording_queue = self._recording_queues.get(camera_id)
             self._display_queues[camera_id] = display_queue
             self._workers[camera_id] = worker
         worker.start()
@@ -89,12 +92,25 @@ class CameraManager:
             worker.stop()
 
     def set_recording_queue(self, camera_id: str, recording_queue: RecordingQueue | None) -> None:
-        """Route frames from a streaming camera into ``recording_queue`` (None to detach)."""
+        """Route frames from ``camera_id`` into ``recording_queue`` (None to detach).
+
+        The queue stays attached across stop/start of streaming until detached.
+        """
+        self.camera(camera_id)  # KeyError for unknown cameras
+        with self._lock:
+            if recording_queue is None:
+                self._recording_queues.pop(camera_id, None)
+            else:
+                self._recording_queues[camera_id] = recording_queue
+            worker = self._workers.get(camera_id)
+        if worker is not None:
+            worker.recording_queue = recording_queue
+
+    def snapshot_frame(self, camera_id: str) -> Frame | None:
+        """Most recent frame from a streaming camera (does not consume the display queue)."""
         with self._lock:
             worker = self._workers.get(camera_id)
-        if worker is None:
-            raise CameraError(f"{camera_id}: not streaming")
-        worker.recording_queue = recording_queue
+        return worker.last_frame if worker is not None else None
 
     def shutdown(self) -> None:
         for camera_id in self.camera_ids:

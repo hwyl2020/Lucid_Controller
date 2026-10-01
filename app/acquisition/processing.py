@@ -15,6 +15,15 @@ _MONO16_BITS = {"Mono10": 10, "Mono12": 12, "Mono16": 16}
 _BAYER_PHASES = {"RG": ((0, 0), (1, 1)), "GR": ((0, 1), (1, 0)), "GB": ((1, 0), (0, 1)), "BG": ((1, 1), (0, 0))}
 _BAYER_BITS = {"8": 8, "10": 10, "12": 12, "16": 16}
 
+# GenICam/PFNC Bayer phase -> OpenCV demosaic code. OpenCV names the pattern differently, so RG<->BG
+# and GR<->GB are swapped. Verified against the Arena SDK demosaic (tests/test_arena_sdk_buffers.py).
+_CV_DEMOSAIC = {
+    "RG": cv2.COLOR_BayerBG2RGB,
+    "GR": cv2.COLOR_BayerGB2RGB,
+    "GB": cv2.COLOR_BayerGR2RGB,
+    "BG": cv2.COLOR_BayerRG2RGB,
+}
+
 DISPLAY_PIXEL_FORMATS = (
     "Mono8", "RGB8", *_MONO16_BITS,
     *(f"Bayer{p}{b}" for p in _BAYER_PHASES for b in _BAYER_BITS),
@@ -42,8 +51,8 @@ def to_display_rgba(frame: Frame, max_side: int = 1024, out: np.ndarray | None =
         to_rgba = cv2.COLOR_GRAY2RGBA
     elif pixel_format == "RGB8":
         img, to_rgba = data, cv2.COLOR_RGB2RGBA
-    elif pixel_format.startswith("Bayer") and pixel_format[5:7] in _BAYER_PHASES and pixel_format[7:] in _BAYER_BITS:
-        img, to_rgba = bayer_preview(data, pixel_format[5:7], _BAYER_BITS[pixel_format[7:]]), cv2.COLOR_RGB2RGBA
+    elif (bayer := _parse_bayer(pixel_format)) is not None:
+        img, to_rgba = bayer_preview(data, *bayer), cv2.COLOR_RGB2RGBA
     else:
         raise PixelConversionError(f"No display conversion for {pixel_format!r}")
 
@@ -81,3 +90,31 @@ def bayer_preview(raw: np.ndarray, phase: str, bits: int = 8) -> np.ndarray:
     red, blue = plane(ry, rx), plane(by, bx)
     green = cv2.addWeighted(plane(*green_sites[0]), 0.5, plane(*green_sites[1]), 0.5, 0)
     return cv2.merge([red, green, blue])
+
+
+def to_rgb8(frame: Frame, full_resolution: bool = True) -> np.ndarray:
+    """8-bit RGB (h, w, 3) for saving snapshots/video.
+
+    Bayer frames are fully demosaiced when ``full_resolution`` is set, else 2x2-binned to half size.
+    """
+    data, pixel_format = frame.data, frame.pixel_format
+    if pixel_format == "Mono8":
+        return cv2.cvtColor(data, cv2.COLOR_GRAY2RGB)
+    if pixel_format in _MONO16_BITS:
+        return cv2.cvtColor((data >> (_MONO16_BITS[pixel_format] - 8)).astype(np.uint8), cv2.COLOR_GRAY2RGB)
+    if pixel_format == "RGB8":
+        return data
+    bayer = _parse_bayer(pixel_format)
+    if bayer is None:
+        raise PixelConversionError(f"No RGB conversion for {pixel_format!r}")
+    phase, bits = bayer
+    if not full_resolution:
+        return bayer_preview(data, phase, bits)
+    raw8 = data if bits == 8 else (data >> (bits - 8)).astype(np.uint8)
+    return cv2.cvtColor(raw8, _CV_DEMOSAIC[phase])
+
+
+def _parse_bayer(pixel_format: str) -> tuple[str, int] | None:
+    if pixel_format.startswith("Bayer") and pixel_format[5:7] in _BAYER_PHASES and pixel_format[7:] in _BAYER_BITS:
+        return pixel_format[5:7], _BAYER_BITS[pixel_format[7:]]
+    return None
