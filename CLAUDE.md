@@ -22,7 +22,7 @@ The venv is created with `--system-site-packages` so it can see the globally ins
 ```bash
 python -m venv --system-site-packages .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m app.main [--config config.json] [--log-level DEBUG]   # run the app
+.venv\Scripts\python -m app.main [--config config.json] [--log-level DEBUG] [--simulators N]   # run the app (default: 4 simulators)
 .venv\Scripts\python -m pytest                                               # all tests
 .venv\Scripts\python -m pytest tests/test_configuration.py::test_name        # single test
 ```
@@ -71,6 +71,15 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - Queue policy, bounded in both cases:
   - **Display:** newest frame wins, and old frames may be dropped.
   - **Recording:** never drop silently. Surface drops, overflow, write errors and disk-full conditions.
+
+### UI rendering (`app/ui/`)
+
+- `main.py` runs a manual Dear PyGui loop that calls `MainWindow.update()` and then `dpg.render_dearpygui_frame()` each frame.
+- `MultiView` lays out `CameraView` tiles. Each tile polls `latest_frame()`, converts it with `processing.to_display_rgba` into a **reused** float32 buffer, and pushes it to a raw texture.
+- Textures are sized to the tile, rounded up to one of the `TEXTURE_SIDES` sizes.
+- **Performance:** allocating a new float buffer per frame cost about 18 ms per tile. Reusing the buffer (`out=`) and sizing textures to the tile took four 720p simulators from 13 to 39 render FPS. Keep both.
+- **Bayer:** display conversion is intentionally absent until it is verified against a real camera, because GenICam and OpenCV name the Bayer phases differently.
+- **Fonts:** Dear PyGui's default font has no `●` glyph, so `theme.load_font()` loads Segoe UI.
 
 ### Capability-driven GenICam
 

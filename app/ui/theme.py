@@ -2,7 +2,24 @@
 
 from __future__ import annotations
 
+import logging
+import os
+from pathlib import Path
+
 import dearpygui.dearpygui as dpg
+
+from app.models.camera_state import CameraState
+
+logger = logging.getLogger(__name__)
+
+TEXT_DIM = (142, 142, 147)
+
+STATE_COLORS = {
+    CameraState.DISCONNECTED: (142, 142, 147),
+    CameraState.CONNECTED: (10, 132, 255),
+    CameraState.ACQUIRING: (48, 209, 88),
+    CameraState.ERROR: (255, 69, 58),
+}
 
 _PALETTES = {
     "dark": {
@@ -28,6 +45,28 @@ _PALETTES = {
         "accent_hover": (40, 140, 255),
     },
 }
+
+
+# First existing font wins; Dear PyGui's built-in font lacks glyphs such as the state dot (U+25CF).
+FONT_CANDIDATES = (
+    Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "segoeui.ttf",
+    Path("/System/Library/Fonts/SFNS.ttf"),
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+)
+STATE_DOT = 0x25CF
+
+
+def load_font(size: int = 16) -> None:
+    """Bind the first available UI font; keep the built-in font if none is found."""
+    path = next((p for p in FONT_CANDIDATES if p.exists()), None)
+    if path is None:
+        logger.warning("No UI font found; using Dear PyGui default (state dots may render as '?')")
+        return
+    with dpg.font_registry():
+        with dpg.font(str(path), size) as font:
+            dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
+            dpg.add_font_range(STATE_DOT, STATE_DOT)
+    dpg.bind_font(font)
 
 
 def create_theme(name: str = "dark") -> int:
