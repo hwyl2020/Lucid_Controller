@@ -92,3 +92,15 @@ def test_bayer_frame_displays_at_half_resolution():
     raw = np.zeros((300, 400), np.uint8)
     out = to_display_rgba(make_frame(raw, "BayerRG8"), max_side=1024)
     assert out.shape == (150, 200, 4)
+
+
+def test_texture_side_follows_displayed_image_not_tile():
+    from app.ui.camera_view import texture_side_for
+
+    # 16:9 frame in a short, wide box: displayed ~172x97 -> smallest texture size
+    assert texture_side_for(1280, 720, 548, 97) == 256
+    # same frame in a large box: displayed 1000x562 -> 1024
+    assert texture_side_for(1280, 720, 1000, 800) == 1024
+    # 12 MP frame in a 4x4 tile
+    assert texture_side_for(4024, 3036, 300, 160) == 256
+    assert texture_side_for(0, 0, 100, 100) == 2048  # unknown -> safe maximum

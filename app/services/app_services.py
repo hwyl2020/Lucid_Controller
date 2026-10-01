@@ -7,6 +7,8 @@ from pathlib import Path
 
 from app.cameras.camera_manager import CameraManager
 from app.services.camera_control_service import CameraControlService
+from app.services.camera_status_service import CameraStatusService
+from app.services.log_buffer import LogBuffer
 from app.services.performance_monitor import PerformanceMonitor
 from app.services.profile_service import ProfileService, SettingsApplier
 from app.services.reconnect_service import ReconnectService
@@ -21,6 +23,8 @@ class AppServices:
     log_dir: Path
     manager: CameraManager
     controls: CameraControlService
+    statuses: CameraStatusService
+    logs: LogBuffer
     recording: RecordingService
     reconnect: ReconnectService
     performance: PerformanceMonitor
@@ -28,8 +32,11 @@ class AppServices:
     sessions: SessionManager
 
     @classmethod
-    def create(cls, config: dict, config_path: Path, manager: CameraManager) -> AppServices:
+    def create(
+        cls, config: dict, config_path: Path, manager: CameraManager, logs: LogBuffer | None = None
+    ) -> AppServices:
         controls = CameraControlService(manager)
+        statuses = CameraStatusService(manager)
         recording = RecordingService(manager, config)
         applier = SettingsApplier(manager, controls)
         reconnect = ReconnectService(manager)
@@ -40,9 +47,11 @@ class AppServices:
             log_dir=Path(config["logging"]["directory"]),
             manager=manager,
             controls=controls,
+            statuses=statuses,
+            logs=logs if logs is not None else LogBuffer(),
             recording=recording,
             reconnect=reconnect,
-            performance=PerformanceMonitor(manager, recording),
+            performance=PerformanceMonitor(manager, recording, statuses=statuses),
             profiles=ProfileService(manager, applier, Path(config["profiles"]["directory"])),
             sessions=SessionManager(manager, applier, Path(config["sessions"]["directory"])),
         )

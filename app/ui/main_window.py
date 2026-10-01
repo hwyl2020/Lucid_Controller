@@ -16,10 +16,12 @@ from app.services.diagnostics import export_diagnostics
 from app.ui import dialogs
 from app.ui.camera_controls import CameraControlsPanel
 from app.ui.camera_sidebar import CameraSidebar
+from app.ui.log_panel import LogPanel
 from app.ui.multiview import MultiView
 from app.ui.performance_window import PerformanceWindow
 from app.ui.settings_window import SettingsWindow
-from app.ui.theme import STATE_COLORS, TEXT_DIM, create_theme, load_font
+from app.ui.status_panel import StatusPanel
+from app.ui.theme import STATE_COLORS, TEXT_DIM, create_theme, load_fonts, square_window_theme, use_font
 from app.ui.toolbar import Toolbar, format_recording_status
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,8 @@ logger = logging.getLogger(__name__)
 APP_TITLE = "LUCID Camera Studio"
 SIDEBAR_WIDTH = 300
 HEADER_HEIGHT = 40
-STATUS_HEIGHT = 32
+STATUS_HEIGHT = 30
+SPACING = 6  # matches mvStyleVar_ItemSpacing y in theme.py
 
 
 class MainWindow:
@@ -38,6 +41,9 @@ class MainWindow:
         self._ui_fps = 0.0
         self._ui_frames = 0
         self._ui_window_start = time.perf_counter()
+        self._bottom_height = 0
+        ui_cfg = services.config["ui"]
+        load_fonts()  # before building widgets so use_font() can apply heading/mono faces
 
         with dpg.window(tag="main_window", menubar=True):
             with dpg.menu_bar():
@@ -67,7 +73,8 @@ class MainWindow:
 
             with dpg.child_window(height=HEADER_HEIGHT, border=False, no_scrollbar=True):
                 with dpg.group(horizontal=True):
-                    dpg.add_text(APP_TITLE)
+                    app_title = dpg.add_text(APP_TITLE)
+                    use_font(app_title, "heading")
                     dpg.add_spacer(width=24)
                     self._header_status = dpg.add_text("", color=TEXT_DIM)
                     dpg.add_spacer(width=24)
@@ -76,22 +83,33 @@ class MainWindow:
 
             with dpg.group(horizontal=True):
                 with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8) as sidebar:
-                    self._sidebar = CameraSidebar(sidebar, self._manager)
+                    self._sidebar_window = sidebar
+                    self._sidebar = CameraSidebar(sidebar, self._manager, services.statuses)
                     self._controls = CameraControlsPanel(
                         sidebar, self._manager, services.controls, services.profiles, wrap=SIDEBAR_WIDTH - 30
                     )
                 with dpg.child_window(width=-1, height=-STATUS_HEIGHT - 8, no_scrollbar=True) as area:
+                    self._area_window = area
                     self._multiview = MultiView(
                         area, self._manager, app_cfg["default_layout"], services.recording, services.reconnect
                     )
 
+            # Collapsible sections below the multiview; the stream area takes whatever they free up.
+            self._status_panel = StatusPanel(
+                "main_window", services.statuses, ui_cfg["stats_refresh_hz"], default_open=ui_cfg["status_panel_open"]
+            )
+            self._log_panel = LogPanel(
+                "main_window", services.logs, ui_cfg["stats_refresh_hz"], default_open=ui_cfg["log_panel_open"],
+                theme=app_cfg["theme"],
+            )
+
             with dpg.child_window(height=STATUS_HEIGHT, border=False, no_scrollbar=True):
-                self._status = dpg.add_text("")
+                self._status = dpg.add_text("", color=TEXT_DIM)
 
         self._performance = PerformanceWindow(services.performance, self._multiview.display_fps, lambda: self._ui_fps)
         self._settings = SettingsWindow(services, on_theme=self.set_theme)
         self.set_theme(app_cfg["theme"])
-        load_font()
+        dpg.bind_item_theme("main_window", square_window_theme())
         dpg.set_primary_window("main_window", True)
 
     # --- per frame ------------------------------------------------------------
@@ -101,6 +119,9 @@ class MainWindow:
         self._sidebar.update()
         self._controls.update(self._sidebar.selected)
         self._multiview.update()
+        self._status_panel.update()
+        self._log_panel.update()
+        self._fit_main_area()
         self._performance.update()
         self._update_ui_fps()
 
@@ -126,6 +147,15 @@ class MainWindow:
             f"{error_text} | Layout {self._multiview.layout} | {format_recording_status(self._toolbar.status)}",
         )
 
+    def _fit_main_area(self) -> None:
+        """Give the sidebar/multiview row all height not used by the sections below it."""
+        sections = dpg.get_item_rect_size(self._status_panel.group)[1] + dpg.get_item_rect_size(self._log_panel.group)[1]
+        bottom = int(sections + STATUS_HEIGHT + 3 * SPACING)
+        if bottom != self._bottom_height:
+            self._bottom_height = bottom
+            for window in (self._sidebar_window, self._area_window):
+                dpg.configure_item(window, height=-bottom)
+
     def _update_ui_fps(self) -> None:
         self._ui_frames += 1
         now = time.perf_counter()
@@ -136,6 +166,8 @@ class MainWindow:
     # --- actions --------------------------------------------------------------
     def set_theme(self, name: str, persist: bool = False) -> None:
         dpg.bind_theme(create_theme(name))
+        if hasattr(self, "_log_panel"):
+            self._log_panel.set_theme(name)
         if persist:
             self._services.config["application"]["theme"] = name
             self._persist_config()

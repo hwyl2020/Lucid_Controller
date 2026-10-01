@@ -16,6 +16,7 @@ from app.cameras.camera_manager import CameraManager
 from app.cameras.simulator_camera import PATTERNS, SimulatorCamera, SimulatorConfig
 from app.services.configuration import load_config
 from app.services.logging_service import setup_logging
+from app.services import log_buffer
 from app.services.app_services import AppServices
 from app.ui.main_window import APP_TITLE, MainWindow
 
@@ -68,6 +69,7 @@ def main() -> None:
     config = load_config(args.config)
     log_cfg = config["logging"]
     log_file = setup_logging(Path(log_cfg["directory"]), args.log_level or log_cfg["level"])
+    logs = log_buffer.install()
     logger.info("Starting %s (log: %s)", APP_TITLE, log_file)
 
     manager = CameraManager()
@@ -77,7 +79,7 @@ def main() -> None:
         logger.info("No Arena cameras found; adding %d simulator cameras", simulators)
     add_simulators(manager, simulators)
 
-    services = AppServices.create(config, args.config, manager)
+    services = AppServices.create(config, args.config, manager, logs)
     services.start()
 
     dpg.create_context()

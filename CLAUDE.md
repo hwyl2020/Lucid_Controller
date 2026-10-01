@@ -154,6 +154,29 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Theming:** light/dark palettes in `theme.py` must set the bar, table and popup colours too, otherwise Dear PyGui keeps its dark defaults. Use `(-255, 0, 0, 255)` as a text colour to mean "theme default".
 - **Verified on the TRI122S-C:** the performance monitor showed 9.1 FPS, 111 MB/s, 0 missed frames, NIC `Ethernet`. Profile save/apply worked with no warnings.
 
+### UI layout and conventions (UI polish pass)
+
+- **Layout, top to bottom:**
+  - toolbar;
+  - sidebar + multiview;
+  - collapsible **Camera Status** section (`status_panel.py`);
+  - collapsible **Logs** section (`log_panel.py`);
+  - status bar.
+- **Fitting the stream area:** `MainWindow._fit_main_area()` measures the two sections each frame and sets the sidebar/multiview height to `-(sections + status bar)`. Collapsing a section gives the stream its space immediately.
+- **Camera names:** shown everywhere as **`Model (Serial)`** via `camera_display_name()` / `CameraStatus.display_name`. The sidebar rows expand to show the IP address and state from `CameraStatusService`, never hard-coded.
+- **Per-camera status:** `CameraStatusService` builds `CameraStatus` (identity, IP, state, `bandwidth_mbps`, fps, `frame_count`, missed, timeouts). It is the single source for the sidebar, the status cards and the Performance window. Don't recompute these figures elsewhere.
+- **Units:** data rates are **Mb/s (megabits) everywhere**, via `models/units.py` (`bytes/s × 8 / 1e6`). Never display `MB/s`.
+- **Logs:**
+  - `services/log_buffer.LogBuffer` is a thread-safe bounded `logging.Handler`, installed in `main.py` right after `setup_logging`.
+  - The panel pulls entries incrementally (`since(seq)`) at `ui.stats_refresh_hz`, keeps at most 1000 rows, and uses a table clipper.
+  - Filter segments: All, Debug, Info, Warning, Error. Each shows that exact level; Error also includes Critical.
+  - Auto-scroll pins to the bottom every frame while it is enabled.
+- **Refresh rates:** the panels refresh at `ui.stats_refresh_hz` (default 5) and do no work while collapsed. Collapsed/expanded state lasts for the session; the defaults come from `config.ui.*_panel_open`.
+- **Fonts and themes:**
+  - `theme.load_fonts()` must run before widgets are built. It loads Segoe UI (body), Segoe UI Semibold (headings) and Consolas (log lines); `use_font(item, role)` applies them.
+  - `compact_table_theme()` is for dense tables, `plain_button_theme()` for disclosure arrows, and `segment_selected_theme()` for the active segment.
+- **Texture sizing:** textures are sized from the image as displayed (`camera_view.texture_side_for`), not from the tile's longest side. The old rule converted about 20× more pixels than shown in short tiles. With 4 simulators and both sections open, multiview cost went from 52 ms to 4 ms per frame.
+
 ### Capability-driven GenICam
 
 Don't hard-code an exhaustive node list. Query what the connected camera supports:

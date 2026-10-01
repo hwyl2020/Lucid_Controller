@@ -16,6 +16,7 @@ import dearpygui.dearpygui as dpg
 from app.cameras.camera_device import CameraError, NumericRange, Roi
 from app.cameras.camera_manager import CameraManager
 from app.models.camera_state import CameraState
+from app.models.camera_status import camera_display_name
 from app.services.camera_control_service import CameraControlService, ControlSnapshot
 from app.services.profile_service import ProfileService
 from app.ui.theme import STATE_COLORS, TEXT_DIM
@@ -117,7 +118,8 @@ class CameraControlsPanel:
             return
 
         self._last_state = self._manager.state(camera_id)
-        dpg.set_value(self._title, f"CAMERA SETTINGS — {camera_id}")
+        camera = self._manager.camera(camera_id)
+        dpg.set_value(self._title, f"CAMERA SETTINGS — {camera_display_name(camera.model, camera.serial_number)}")
         try:
             snap = self._service.snapshot(camera_id)
         except CameraError as exc:

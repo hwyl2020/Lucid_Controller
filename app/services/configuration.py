@@ -15,6 +15,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "theme": "dark",
         "default_layout": "2x2",
     },
+    "ui": {
+        "stats_refresh_hz": 5,  # camera status / log panel refresh rate (not tied to camera FPS)
+        "status_panel_open": True,
+        "log_panel_open": False,
+    },
     "recording": {
         "directory": "recordings",
         "mode": "raw",  # "raw" (lossless, full resolution) or "video" (half-resolution MP4)
