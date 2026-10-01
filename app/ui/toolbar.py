@@ -14,10 +14,7 @@ from app.ui.theme import STATE_COLORS, TEXT_DIM
 
 logger = logging.getLogger(__name__)
 
-MODE_LABELS = {
-    RecordingMode.RAW: "Raw (lossless)",
-    RecordingMode.VIDEO: "Video (MP4, half res)",
-}
+MODE_LABELS = {mode: mode.label for mode in RecordingMode}
 RECORD_RED = STATE_COLORS[CameraState.ERROR]
 
 

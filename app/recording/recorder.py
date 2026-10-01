@@ -30,8 +30,19 @@ WRITE_BUFFER_BYTES = 8 * 1024 * 1024
 
 
 class RecordingMode(Enum):
-    RAW = "raw"
-    VIDEO = "video"
+    RAW = "raw"  # lossless native frames (frames.raw + frames.csv)
+    VIDEO = "video"  # MP4; value kept as "video" for existing config files
+    AVI = "avi"
+    MOV = "mov"
+    MKV = "mkv"
+
+    @property
+    def is_video(self) -> bool:
+        return self is not RecordingMode.RAW
+
+    @property
+    def label(self) -> str:
+        return {"raw": "Raw (lossless)", "video": "MP4", "avi": "AVI", "mov": "MOV", "mkv": "MKV"}[self.value]
 
 
 class FrameWriter(Protocol):

@@ -242,3 +242,87 @@ def test_snapshot_all_streaming(service, tmp_path):
     meta = json.loads(files[0].metadata.read_text())
     assert meta["camera"]["camera_id"] == "SIM-1" and meta["application"]["version"]
     assert files[0].raw.exists() and files[0].processed.exists()
+
+
+# --- independent per-camera recording / capture ---------------------------------
+def test_cameras_record_independently(service):
+    manager, svc = service
+    stream_all(manager)
+    dir_a = svc.start(RecordingMode.RAW, ["SIM-1"])
+    assert svc.is_recording("SIM-1") and not svc.is_recording("SIM-2")
+    with pytest.raises(RecordingError, match="Already recording"):
+        svc.start(RecordingMode.RAW, ["SIM-1"])
+    dir_b = svc.start(RecordingMode.VIDEO, ["SIM-2"])
+    assert dir_b != dir_a and svc.is_recording("SIM-2")
+    assert svc.camera_recording("SIM-2").mode is RecordingMode.VIDEO
+    assert wait_until(lambda: svc.camera_recording("SIM-1").stats.frames_written >= 5)
+
+    stopped = svc.stop(["SIM-1"])  # stopping A must not touch B
+    assert list(stopped.cameras) == ["SIM-1"] and stopped.cameras["SIM-1"].frames_written >= 5
+    assert not svc.is_recording("SIM-1") and svc.is_recording("SIM-2") and svc.active
+    assert json.loads((dir_a / "session.json").read_text())["session"]["stopped"]
+    assert json.loads((dir_b / "session.json").read_text())["session"]["stopped"] is None
+    svc.stop()
+    assert not svc.active
+
+
+def test_stop_one_camera_of_a_shared_session(service):
+    manager, svc = service
+    stream_all(manager)
+    session_dir = svc.start(RecordingMode.RAW)  # toolbar: all streaming cameras
+    assert svc.is_recording("SIM-1") and svc.is_recording("SIM-2")
+    svc.stop(["SIM-2"])
+    doc = json.loads((session_dir / "session.json").read_text())
+    assert doc["session"]["stopped"] is None  # SIM-1 still recording
+    assert [c["recording"]["stopped"] for c in doc["cameras"]] == [False, True]
+    svc.stop(["SIM-1"])
+    assert json.loads((session_dir / "session.json").read_text())["session"]["stopped"]
+
+
+def test_toolbar_start_skips_cameras_already_recording(service):
+    manager, svc = service
+    stream_all(manager)
+    svc.start(RecordingMode.RAW, ["SIM-1"])
+    svc.start()  # records the rest
+    assert svc.is_recording("SIM-2")
+    with pytest.raises(RecordingError, match="No streaming cameras"):
+        svc.start()
+
+
+def test_cannot_record_a_stopped_camera(service):
+    manager, svc = service
+    manager.connect("SIM-1")
+    with pytest.raises(RecordingError, match="Start the camera"):
+        svc.start(RecordingMode.RAW, ["SIM-1"])
+
+
+@pytest.mark.parametrize("mode,extension", [(RecordingMode.AVI, "avi"), (RecordingMode.MOV, "mov"),
+                                            (RecordingMode.MKV, "mkv")])
+def test_video_containers(service, mode, extension):
+    manager, svc = service
+    stream_all(manager)
+    session_dir = svc.start(mode, ["SIM-1"])
+    assert wait_until(lambda: svc.status().frames_written >= 8)
+    svc.stop()
+    capture = cv2.VideoCapture(str(session_dir / "Camera_01" / f"video.{extension}"))
+    assert capture.isOpened() and int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) >= 8
+    capture.release()
+
+
+@pytest.mark.parametrize("image_format,extension,raw_extension", [
+    ("png", "png", "png"), ("jpeg", "jpg", "png"), ("bmp", "bmp", "png"), ("tiff", "tif", "tif")])
+def test_snapshot_formats(tmp_path, image_format, extension, raw_extension):
+    raw = np.array([[0, 4095], [1234, 65535]], np.uint16)
+    files = save_snapshot(frame(1, raw, "Mono16"), tmp_path, {}, image_format)
+    assert files.processed.suffix == f".{extension}" and cv2.imread(str(files.processed)) is not None
+    assert files.raw.suffix == f".{raw_extension}"
+    np.testing.assert_array_equal(cv2.imread(str(files.raw), cv2.IMREAD_UNCHANGED), raw)  # raw stays lossless
+
+
+def test_snapshot_one_camera_only(service):
+    manager, svc = service
+    stream_all(manager)
+    files = svc.snapshot(["SIM-2"], "jpeg")
+    assert len(files) == 1 and files[0].processed.name.startswith("SIM-2") and files[0].processed.suffix == ".jpg"
+    with pytest.raises(RecordingError, match="Unsupported image format"):
+        svc.snapshot(["SIM-2"], "gif")

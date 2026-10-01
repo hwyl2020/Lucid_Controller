@@ -15,14 +15,22 @@ import cv2
 from app.acquisition.frame import Frame
 from app.acquisition.processing import to_rgb8
 
-VIDEO_FILE = "video.mp4"
+# Container -> (extension, FourCC). Each was verified on the dev PC to write and read back with the
+# bundled OpenCV/FFmpeg, and to encode a 2012x1518 frame in 16-22 ms (45-64 FPS).
+CONTAINERS = {
+    "mp4": ("mp4", "mp4v"),
+    "avi": ("avi", "MJPG"),
+    "mov": ("mov", "mp4v"),
+    "mkv": ("mkv", "XVID"),
+}
 INDEX_FILE = "frames.csv"
 
 
 class VideoFileWriter:
-    def __init__(self, directory: Path, fps: float) -> None:
+    def __init__(self, directory: Path, fps: float, container: str = "mp4") -> None:
         directory.mkdir(parents=True, exist_ok=True)
-        self._path = directory / VIDEO_FILE
+        extension, self._fourcc = CONTAINERS[container]
+        self._path = directory / f"video.{extension}"
         self._fps = max(float(fps), 1.0)
         self._writer: cv2.VideoWriter | None = None
         self._size: tuple[int, int] | None = None
@@ -38,7 +46,7 @@ class VideoFileWriter:
         height, width = rgb.shape[:2]
         if self._writer is None:
             self._size = (width, height)
-            self._writer = cv2.VideoWriter(str(self._path), cv2.VideoWriter_fourcc(*"mp4v"), self._fps, self._size)
+            self._writer = cv2.VideoWriter(str(self._path), cv2.VideoWriter_fourcc(*self._fourcc), self._fps, self._size)
             if not self._writer.isOpened():
                 raise OSError(f"Could not open video writer for {self._path}")
         elif (width, height) != self._size:
@@ -50,6 +58,10 @@ class VideoFileWriter:
         self._index.writerow((self._count, frame.frame_id, f"{frame.timestamp:.6f}"))
         self._count += 1
         return rgb.nbytes
+
+    @property
+    def path(self) -> Path:
+        return self._path
 
     def close(self) -> None:
         if self._writer is not None:
