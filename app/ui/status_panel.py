@@ -1,7 +1,8 @@
-"""Collapsible "Camera Status" section: one card per camera with bandwidth (Mb/s), FPS and frames.
+"""Collapsible "Camera Status" section: one line per camera with bandwidth (Mb/s), FPS and frames.
 
 Values come from CameraStatusService and are refreshed at ``refresh_hz`` (not per rendered frame);
-nothing is updated while the section is collapsed.
+nothing is updated while the section is collapsed. The list grows with the number of cameras up to
+``MAX_VISIBLE_ROWS`` and scrolls beyond that.
 """
 
 from __future__ import annotations
@@ -13,47 +14,27 @@ import dearpygui.dearpygui as dpg
 from app.models.camera_state import CameraState
 from app.models.camera_status import CameraStatus
 from app.services.camera_status_service import CameraStatusService
-from app.ui.theme import STATE_COLORS, TEXT_DIM, compact_table_theme, use_font
+from app.ui.theme import STATE_COLORS, TEXT_DIM, compact_table_theme
 
-CARD_WIDTH = 260
-CARD_HEIGHT = 136
-CARD_SPACING = 8
-LABEL_COLUMN = 88
-MAX_VISIBLE_ROWS = 2
+ROW_HEIGHT = 24  # body font row in a compact table
+HEADER_ROW_HEIGHT = 26
+MAX_VISIBLE_ROWS = 6
+# Fixed widths keep the figures next to the camera name; a trailing stretch column takes the rest.
+COLUMNS = (("Camera", 280.0), ("Status", 110.0), ("Bandwidth", 140.0), ("FPS", 80.0), ("Frames", 110.0), ("", 0.0))
 DASH = "—"
 
 
-_COMPACT: int | None = None
-
-
-def _compact_theme() -> int:
-    global _COMPACT
-    if _COMPACT is None or not dpg.does_item_exist(_COMPACT):
-        _COMPACT = compact_table_theme()
-    return _COMPACT
-
-
-class _Card:
-    def __init__(self, parent: int | str, status: CameraStatus) -> None:
-        self.camera_id = status.camera_id
-        with dpg.child_window(parent=parent, width=CARD_WIDTH, height=CARD_HEIGHT, border=True,
-                              no_scrollbar=True) as self.window:
+class _Line:
+    def __init__(self, table: int | str, status: CameraStatus) -> None:
+        with dpg.table_row(parent=table):
             with dpg.group(horizontal=True, horizontal_spacing=6):
                 self.dot = dpg.add_text("●")
-                title = dpg.add_text(status.display_name)
-                use_font(title, "heading")
-            dpg.add_spacer(height=2)
-            with dpg.table(header_row=False, borders_innerH=False, borders_outerH=False,
-                           borders_innerV=False, borders_outerV=False,
-                           policy=dpg.mvTable_SizingFixedFit) as table:
-                dpg.add_table_column(width_fixed=True, init_width_or_weight=LABEL_COLUMN)
-                dpg.add_table_column(width_stretch=True)
-                self.values = {}
-                for label in ("Bandwidth", "FPS", "Frames"):
-                    with dpg.table_row():
-                        dpg.add_text(label, color=TEXT_DIM)
-                        self.values[label] = dpg.add_text(DASH)
-            dpg.bind_item_theme(table, _compact_theme())
+                dpg.add_text(status.display_name)
+            self.state = dpg.add_text("")
+            self.bandwidth = dpg.add_text(DASH)
+            self.fps = dpg.add_text(DASH)
+            self.frames = dpg.add_text(DASH)
+            dpg.add_text("")  # filler cell for the stretch column
         self._last: tuple | None = None
 
     def update(self, status: CameraStatus) -> None:
@@ -67,9 +48,21 @@ class _Card:
         if shown == self._last:
             return  # avoid needless widget updates
         self._last = shown
-        dpg.configure_item(self.dot, color=STATE_COLORS[status.state])
-        for label, text in zip(("Bandwidth", "FPS", "Frames"), shown[1:]):
-            dpg.set_value(self.values[label], text)
+        color = STATE_COLORS[status.state]
+        dpg.configure_item(self.dot, color=color)
+        dpg.set_value(self.state, status.state.value.capitalize())
+        dpg.configure_item(self.state, color=color)
+        dpg.set_value(self.bandwidth, shown[1])
+        dpg.set_value(self.fps, shown[2])
+        dpg.set_value(self.frames, shown[3])
+
+    def values(self) -> dict[str, str]:
+        return {
+            "Status": dpg.get_value(self.state),
+            "Bandwidth": dpg.get_value(self.bandwidth),
+            "FPS": dpg.get_value(self.fps),
+            "Frames": dpg.get_value(self.frames),
+        }
 
 
 class StatusPanel:
@@ -77,17 +70,22 @@ class StatusPanel:
         self._statuses = statuses
         self._interval = 1.0 / max(refresh_hz, 0.5)
         self._last_refresh = 0.0
-        self._cards: dict[str, _Card] = {}
-        self._layout_key: tuple[int, int] | None = None
-        self._rows: list[int | str] = []
+        self._lines: dict[str, _Line] = {}
+        self._camera_ids: tuple[str, ...] | None = None
 
         with dpg.group(parent=parent) as self.group:
             self.header = dpg.add_collapsing_header(label="Camera Status", default_open=default_open)
-            use_font(self.header, "heading")
-            with dpg.child_window(parent=self.header, height=CARD_HEIGHT + 16, border=False) as self._body:
-                pass
-            if not statuses.statuses():
-                dpg.add_text("No cameras", color=TEXT_DIM, parent=self._body)
+            with dpg.child_window(parent=self.header, height=HEADER_ROW_HEIGHT + ROW_HEIGHT, border=False) as self._body:
+                with dpg.table(header_row=True, row_background=True, borders_innerH=False, borders_outerH=False,
+                               borders_innerV=False, borders_outerV=False,
+                               policy=dpg.mvTable_SizingStretchProp) as self._table:
+                    for label, width in COLUMNS:
+                        if width:
+                            dpg.add_table_column(label=label, width_fixed=True, init_width_or_weight=width)
+                        else:
+                            dpg.add_table_column(label=label, width_stretch=True)
+                self._empty = dpg.add_text("No cameras", color=TEXT_DIM, show=False)
+        dpg.bind_item_theme(self._table, compact_table_theme())
 
     @property
     def is_open(self) -> bool:
@@ -96,38 +94,34 @@ class StatusPanel:
     def set_open(self, open_: bool) -> None:
         dpg.set_value(self.header, open_)
 
+    def line(self, camera_id: str) -> _Line:
+        return self._lines[camera_id]
+
+    @property
+    def line_count(self) -> int:
+        return len(self._lines)
+
     def update(self) -> None:
         if not self.is_open:
             return
-        width = dpg.get_item_rect_size(self._body)[0]
         statuses = self._statuses.statuses()
-        if not statuses or width <= 0:
-            return
-        per_row = max(1, int((width + CARD_SPACING) // (CARD_WIDTH + CARD_SPACING)))
-        key = (len(statuses), per_row)
-        if key != self._layout_key:
-            self._build(statuses, per_row)
-            self._layout_key = key
+        camera_ids = tuple(s.camera_id for s in statuses)
+        if camera_ids != self._camera_ids:
+            self._build(statuses)
+            self._camera_ids = camera_ids
             self._last_refresh = 0.0
         now = time.monotonic()
         if now - self._last_refresh < self._interval:
             return
         self._last_refresh = now
         for status in statuses:
-            card = self._cards.get(status.camera_id)
-            if card is not None:
-                card.update(status)
+            line = self._lines.get(status.camera_id)
+            if line is not None:
+                line.update(status)
 
-    def _build(self, statuses: list[CameraStatus], per_row: int) -> None:
-        for row in self._rows:
-            dpg.delete_item(row)
-        self._rows, self._cards = [], {}
-        for start in range(0, len(statuses), per_row):
-            row = dpg.add_group(horizontal=True, horizontal_spacing=CARD_SPACING, parent=self._body)
-            self._rows.append(row)
-            for status in statuses[start:start + per_row]:
-                self._cards[status.camera_id] = _Card(row, status)
-        rows = len(self._rows)
-        visible = min(rows, MAX_VISIBLE_ROWS)
-        height = visible * CARD_HEIGHT + (visible - 1) * CARD_SPACING + 16
-        dpg.configure_item(self._body, height=height)
+    def _build(self, statuses: list[CameraStatus]) -> None:
+        dpg.delete_item(self._table, children_only=True, slot=1)  # rows only; keep the columns
+        self._lines = {status.camera_id: _Line(self._table, status) for status in statuses}
+        dpg.configure_item(self._empty, show=not statuses)
+        visible = min(max(len(statuses), 1), MAX_VISIBLE_ROWS)
+        dpg.configure_item(self._body, height=HEADER_ROW_HEIGHT + visible * ROW_HEIGHT + 6)

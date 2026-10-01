@@ -104,3 +104,16 @@ def test_texture_side_follows_displayed_image_not_tile():
     # 12 MP frame in a 4x4 tile
     assert texture_side_for(4024, 3036, 300, 160) == 256
     assert texture_side_for(0, 0, 100, 100) == 2048  # unknown -> safe maximum
+
+
+def test_fit_image_uses_full_tile_and_keeps_aspect():
+    from app.ui.camera_view import fit_image
+
+    # 4:3 camera in a wide 1x1 tile: full height used, centred horizontally (letterboxed sides)
+    x, y, w, h = fit_image(1024, 772, 1280, 520)
+    assert h == 520 and y == 0 and abs(w / h - 1024 / 772) < 0.01 and x == (1280 - w) // 2
+    # same camera in a tall tile: full width used
+    x, y, w, h = fit_image(1024, 772, 400, 600)
+    assert w == 400 and x == 0 and abs(w / h - 1024 / 772) < 0.01
+    # exact aspect: fills the box completely
+    assert fit_image(800, 600, 400, 300) == (0, 0, 400, 300)

@@ -156,6 +156,8 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 
 ### UI layout and conventions (UI polish pass)
 
+- **Tiles:** the image is fitted to the whole tile (aspect kept, centred; no crop or stretch). Name/state and FPS sit on translucent overlay bars, which are child windows because drawlists ignore `pos` in Dear PyGui.
+- **Camera Status:** one line per camera (fixed columns plus a stretch filler); it grows up to 6 rows, then scrolls.
 - **Layout, top to bottom:**
   - toolbar;
   - sidebar + multiview;
