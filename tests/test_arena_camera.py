@@ -323,3 +323,10 @@ def test_arena_camera_auto_reconnects_after_cable_pull(sdk):
     new_device = device_of(sdk)
     assert new_device is not old_device and new_device.streaming
     manager.shutdown()
+
+
+def test_unreachable_subnet_is_explained(sdk):
+    sdk.system.create_error = Exception("SaveC ERROR : SC_ERR_INVALID_ADDRESS -1015")
+    cam = ArenaCamera(ArenaDeviceInfo.from_sdk(fake_arena.device_info()))
+    with pytest.raises(CameraError, match="different subnet"):
+        cam.connect()

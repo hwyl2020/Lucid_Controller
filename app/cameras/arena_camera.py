@@ -533,6 +533,12 @@ class ArenaCamera(CameraDevice):
                 f"{self.camera_id}: access denied during {action}; the camera may be open in "
                 "another application (e.g. ArenaView) or on another PC"
             )
+        if "INVALID_ADDRESS" in message:
+            return CameraError(
+                f"{self.camera_id}: cannot reach the camera at {self._info.ip}; it is probably on a different "
+                "subnet than this PC's network adapter (e.g. a 169.254.x.x link-local address after a power cycle). "
+                "Give the camera and the adapter addresses in the same subnet (ArenaView: Force IP / persistent IP)"
+            )
         if isinstance(exc, ValueError):
             return InvalidValueError(f"{self.camera_id}: {action}: {message}")
         return CameraError(f"{self.camera_id}: {action} failed: {message}")

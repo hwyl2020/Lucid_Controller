@@ -8,6 +8,7 @@ from pathlib import Path
 from app.cameras.camera_manager import CameraManager
 from app.services.camera_control_service import CameraControlService
 from app.services.camera_status_service import CameraStatusService
+from app.services.feature_service import FeatureService
 from app.services.log_buffer import LogBuffer
 from app.services.performance_monitor import PerformanceMonitor
 from app.services.profile_service import ProfileService, SettingsApplier
@@ -24,6 +25,7 @@ class AppServices:
     manager: CameraManager
     controls: CameraControlService
     statuses: CameraStatusService
+    features: FeatureService
     logs: LogBuffer
     recording: RecordingService
     reconnect: ReconnectService
@@ -48,6 +50,7 @@ class AppServices:
             manager=manager,
             controls=controls,
             statuses=statuses,
+            features=FeatureService(manager),
             logs=logs if logs is not None else LogBuffer(),
             recording=recording,
             reconnect=reconnect,

@@ -179,6 +179,39 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
   - `compact_table_theme()` is for dense tables, `plain_button_theme()` for disclosure arrows, and `segment_selected_theme()` for the active segment.
 - **Texture sizing:** textures are sized from the image as displayed (`camera_view.texture_side_for`), not from the tile's longest side. The old rule converted about 20× more pixels than shown in short tiles. With 4 simulators and both sections open, multiview cost went from 52 ms to 4 ms per frame.
 
+### Per-camera rows and Property Grid
+
+- **Sidebar rows:** `CameraSidebar` holds one `CameraRow` (`app/ui/camera_row.py`) per camera.
+  - The header shows disclosure arrow · state dot · `Model (Serial)` · IP · `···` menu.
+  - The expandable panel holds that camera's acquisition toggle, video recording (format + record), image capture (format + capture), Property Grid button and stats.
+  - Every control acts on its own camera only.
+  - The toggle shows the real state from `CameraManager` every frame. Start/stop runs on a worker thread, so one camera connecting never blocks another.
+  - Stopping acquisition finishes that camera's recording first.
+- **Per-camera recording:**
+  - `RecordingService` runs several sessions at once. `start(mode, [id])` and `stop([id])` affect only those cameras, and a camera is in at most one active session.
+  - `camera_recording(id)` gives the per-row state. The toolbar's Record/Stop still means "all streaming cameras not already recording" / "everything".
+  - A session's `session.json` is finalised when its last camera stops.
+- **Video formats:**
+  - Raw, MP4 (mp4v), AVI (MJPG), MOV (mp4v) and MKV (XVID), each verified to write and read back with the bundled OpenCV/FFmpeg.
+  - Each encodes 2012×1518 at 45–64 FPS on the dev PC.
+  - Only verified formats are offered (`RecordingMode`, `video_writer.CONTAINERS`).
+- **Image formats:**
+  - PNG, JPEG, BMP and TIFF apply to the processed image.
+  - The raw copy is always lossless: PNG, or TIFF when TIFF is chosen. BMP can't hold 16-bit and JPEG is lossy.
+- **Feature model:**
+  - `models/features.py` defines `Feature` / `FeatureCategory`.
+  - `CameraDevice.feature_tree / write_feature / execute_feature` are optional (the defaults mean unsupported).
+  - `ArenaCamera` walks the device node map from the GenICam `Root` category (`NodeCategory.features`), keeping the camera's own hierarchy, kinds, access modes, visibility, ranges and enum entries.
+  - Per-node read errors are recorded, never raised. Writes are validated against live min/max/inc/entries, and read-only nodes are refused with a reason.
+  - `SimulatorCamera` exposes a small SFNC-named set for UI tests.
+- **`FeatureService`:** the only path from the UI to features. `tree()` is slow on real cameras (one read per node), so `PropertyGridWindow` loads it on a background thread.
+- **Property Grid window** (`app/ui/property_grid.py`):
+  - One floating window per camera, held in `MainWindow._property_grids`; several can be open.
+  - Editors by kind: bool → checkbox, enum → combo, float → input_double, integer/string → input_text (integers can exceed 32 bits), command → Execute. Read-only values are plain text.
+  - Search and a visibility level (Beginner/Expert/Guru).
+  - The whole tree is re-read after every write, keeping expanded categories, because writes change other nodes' values and access.
+- **Hardware status:** the real-camera tree walk is not verified yet. The camera came back on 169.254.92.34 (link-local) while the PC is on 172.16.1.52/24, and connecting fails with `INVALID_ADDRESS`, which `_translate` now explains as a subnet mismatch.
+
 ### Capability-driven GenICam
 
 Don't hard-code an exhaustive node list. Query what the connected camera supports:

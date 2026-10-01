@@ -19,6 +19,7 @@ from app.ui.camera_sidebar import CameraSidebar
 from app.ui.log_panel import LogPanel
 from app.ui.multiview import MultiView
 from app.ui.performance_window import PerformanceWindow
+from app.ui.property_grid import PropertyGridWindow
 from app.ui.settings_window import SettingsWindow
 from app.ui.status_panel import StatusPanel
 from app.ui.theme import STATE_COLORS, TEXT_DIM, create_theme, load_fonts, square_window_theme, use_font
@@ -27,7 +28,7 @@ from app.ui.toolbar import Toolbar, format_recording_status
 logger = logging.getLogger(__name__)
 
 APP_TITLE = "LUCID Camera Studio"
-SIDEBAR_WIDTH = 300
+SIDEBAR_WIDTH = 380  # fits Model (Serial) + IP on one line
 HEADER_HEIGHT = 40
 STATUS_HEIGHT = 30
 SPACING = 6  # matches mvStyleVar_ItemSpacing y in theme.py
@@ -84,7 +85,9 @@ class MainWindow:
             with dpg.group(horizontal=True):
                 with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8) as sidebar:
                     self._sidebar_window = sidebar
-                    self._sidebar = CameraSidebar(sidebar, self._manager, services.statuses)
+                    self._sidebar = CameraSidebar(
+                        sidebar, self._manager, services.statuses, services.recording, self.open_property_grid
+                    )
                     self._controls = CameraControlsPanel(
                         sidebar, self._manager, services.controls, services.profiles, wrap=SIDEBAR_WIDTH - 30
                     )
@@ -106,6 +109,7 @@ class MainWindow:
             with dpg.child_window(height=STATUS_HEIGHT, border=False, no_scrollbar=True):
                 self._status = dpg.add_text("", color=TEXT_DIM)
 
+        self._property_grids: dict[str, PropertyGridWindow] = {}
         self._performance = PerformanceWindow(services.performance, self._multiview.display_fps, lambda: self._ui_fps)
         self._settings = SettingsWindow(services, on_theme=self.set_theme)
         self.set_theme(app_cfg["theme"])
@@ -123,6 +127,8 @@ class MainWindow:
         self._log_panel.update()
         self._fit_main_area()
         self._performance.update()
+        for grid in list(self._property_grids.values()):
+            grid.update()
         self._update_ui_fps()
 
         camera_ids = self._manager.camera_ids
@@ -213,6 +219,22 @@ class MainWindow:
         dialogs.choose(
             "Load session", "Session", self._services.sessions.list_sessions(), load,
             empty_text="No saved sessions yet. Use File > Save session first.",
+        )
+
+    def open_property_grid(self, camera_id: str) -> None:
+        """One floating Property Grid per camera; reopening focuses the existing window."""
+        grid = self._property_grids.get(camera_id)
+        if grid is not None:
+            grid.focus()
+            return
+        camera = self._manager.camera(camera_id)
+        offset = 30 * len(self._property_grids)
+        self._property_grids[camera_id] = PropertyGridWindow(
+            camera_id,
+            f"{camera.model} ({camera.serial_number})",
+            self._services.features,
+            on_close=lambda cid: self._property_grids.pop(cid, None),
+            pos=(SIDEBAR_WIDTH + 40 + offset, 90 + offset),
         )
 
     def _export_diagnostics(self) -> None:
