@@ -8,3 +8,5 @@ logs/
 config.json
 sessions/
 diagnostics/
+build/
+dist/

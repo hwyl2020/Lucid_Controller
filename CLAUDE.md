@@ -26,6 +26,8 @@ python -m venv --system-site-packages .venv
 .venv\Scripts\python -m scripts.arena_hardware_check [--frames 100] [--serial S]   # real-camera check (CLI, no UI)
 .venv\Scripts\python -m pytest                                               # all tests
 .venv\Scripts\python -m pytest tests/test_configuration.py::test_name        # single test
+.venv\Scripts\python -m pip install -r requirements-build.txt               # once: PyInstaller
+.venv\Scripts\python -m installer.build                                     # Windows package -> dist/
 ```
 
 - `config.json` (gitignored) is optional. It is merged over `DEFAULT_CONFIG` in `app/services/configuration.py`, so only overrides need to be written.
@@ -274,6 +276,23 @@ A missing optional node must hide or disable the control, never crash. Expected 
 `app/{ui,cameras,acquisition,recording,services,models,resources}`, plus `tests/`, `profiles/`, `docs/`, `scripts/`. Runtime output goes in `recordings/`, `snapshots/` and `logs/`, which should be gitignored. Once a structure exists, follow it rather than the spec, and don't create placeholder files ahead of need.
 
 Recording output layout: `Recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_NN/` plus `session.json`. The JSON holds camera model, serial, IP, resolution, pixel format, FPS, exposure, gain, trigger and app version.
+
+## Windows package (`installer/`)
+
+- **Build:** `installer/build.py` runs PyInstaller with `installer/lucid_camera_studio.spec`.
+  - Output: a one-folder, windowed `dist/LUCID Camera Studio/` (`LUCID Camera Studio.exe` + `_internal/` + `README_FIRST.txt`) and `dist/LUCID_Camera_Studio_<version>_win64.zip`, about 157 MB.
+  - The version comes from `app.__version__`; `build/` and `dist/` are gitignored.
+  - The folder is named `installer/`, not `packaging/`, because `packaging` would shadow the PyPI package that pip and PyInstaller import.
+- **Target PC requirement:** the LUCID Arena SDK (64-bit) must be installed. The bundled `arena_api` finds `ArenaC_v140.dll` through the SDK's registry key (`HKLM\SOFTWARE\Lucid Vision Labs\Arena SDK`, `InstallFolder`), and the SDK also installs the GigE filter driver. The SDK's DLLs are not bundled: redistribution is not cleared and the driver needs an installer.
+  - In the packaged app, a missing SDK shows an "Arena SDK not found" dialog, and no simulators are added unless `--simulators` is given.
+- **Data folder** (`app/paths.py`):
+  - When frozen, `main()` changes the working directory to the data folder, so every relative path in the config resolves there.
+  - The data folder is the `.exe` folder if it is writable (portable / USB use), otherwise `Documents\LUCID Camera Studio`.
+  - From source nothing changes. `paths.resource()` locates `app/resources` (`app.ico`, made by `python -m installer.make_icon`).
+- **Verified:**
+  - The `.exe` started on the dev PC, wrote its logs next to itself and discovered the TRI122S-C.
+  - Windows Firewall asks to allow the app on first start; it must be allowed for GigE streaming.
+  - Not yet tried on a second PC or without the SDK.
 
 ## Working rules specific to this project
 
