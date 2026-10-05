@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app import __version__
+from app import APP_NAME, __version__
 from app.acquisition.frame_queue import RecordingQueue
 from app.cameras.camera_device import CameraDevice, CameraError
 from app.cameras.camera_manager import CameraManager
@@ -27,7 +27,6 @@ from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
-APP_NAME = "LUCID Camera Studio"
 DISK_CHECK_INTERVAL_S = 1.0
 _CONTAINER = {
     RecordingMode.VIDEO: "mp4",

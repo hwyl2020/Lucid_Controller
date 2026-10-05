@@ -1,4 +1,4 @@
-"""Build the portable Windows app: dist/LUCID Camera Studio/ plus a zip of it.
+"""Build the portable Windows app: dist/Apertix/ plus a zip of it.
 
     .venv\\Scripts\\python -m pip install -r requirements-build.txt
     .venv\\Scripts\\python -m installer.build
@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app import __version__
+from app import APP_PUBLISHER, __version__
 from app.main import APP_TITLE
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +27,7 @@ VERSION_INFO = """VSVersionInfo(
                     subtype=0x0, date=(0, 0)),
   kids=[
     StringFileInfo([StringTable('040904B0', [
-      StringStruct('CompanyName', ''),
+      StringStruct('CompanyName', '{publisher}'),
       StringStruct('FileDescription', '{title}'),
       StringStruct('FileVersion', '{version}'),
       StringStruct('InternalName', '{title}'),
@@ -45,16 +45,16 @@ def main() -> None:
     v4 = tuple(parts + [0] * (4 - len(parts)))
     BUILD.mkdir(exist_ok=True)
     (BUILD / "version_info.txt").write_text(
-        VERSION_INFO.format(v4=v4, title=APP_TITLE, version=__version__), encoding="utf-8")
+        VERSION_INFO.format(v4=v4, title=APP_TITLE, version=__version__, publisher=APP_PUBLISHER), encoding="utf-8")
 
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
                     "--distpath", str(DIST), "--workpath", str(BUILD / "pyinstaller"),
-                    str(ROOT / "installer" / "lucid_camera_studio.spec")], check=True, cwd=ROOT)
+                    str(ROOT / "installer" / "apertix.spec")], check=True, cwd=ROOT)
 
     readme = (ROOT / "installer" / "README_FIRST.txt").read_text(encoding="utf-8")
     (APP_DIR / "README_FIRST.txt").write_text(readme.replace("{version}", __version__), encoding="utf-8")
 
-    archive = shutil.make_archive(str(DIST / f"LUCID_Camera_Studio_{__version__}_win64"), "zip", DIST, APP_TITLE)
+    archive = shutil.make_archive(str(DIST / f"Apertix_{__version__}_win64"), "zip", DIST, APP_TITLE)
     size_mb = sum(f.stat().st_size for f in APP_DIR.rglob("*") if f.is_file()) / 1e6
     print(f"\nBuilt {APP_DIR} ({size_mb:.0f} MB)\nZip:  {archive}")
 

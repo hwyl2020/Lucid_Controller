@@ -1,4 +1,4 @@
-# PyInstaller spec: one-folder Windows build of LUCID Camera Studio.
+# PyInstaller spec: one-folder Windows build of Apertix.
 # Build with:  .venv\Scripts\python -m installer.build
 #
 # arena_api (LUCID's Python wrapper) is bundled; it loads the ArenaC DLLs from the Arena SDK that
@@ -25,10 +25,10 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="LUCID Camera Studio",
+    name="Apertix",
     icon=ICON,
-    console=False,  # windowed app; everything is logged to logs/lucid_camera_studio.log
+    console=False,  # windowed app; everything is logged to logs/apertix.log
     upx=False,
     version=str(ROOT / "build" / "version_info.txt"),
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="LUCID Camera Studio")
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Apertix")

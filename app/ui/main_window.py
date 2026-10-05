@@ -11,8 +11,11 @@ import logging
 import time
 from pathlib import Path
 
+import cv2
 import dearpygui.dearpygui as dpg
+import numpy as np
 
+from app import APP_NAME, APP_PUBLISHER, paths
 from app.cameras.camera_device import CameraError
 from app.models.camera_state import CameraState
 from app.services.app_services import AppServices
@@ -33,16 +36,27 @@ from app.ui.widgets import Splitter
 
 logger = logging.getLogger(__name__)
 
-APP_TITLE = "LUCID Camera Studio"
+APP_TITLE = APP_NAME
 SIDEBAR_WIDTH = 392  # default; fits Model (Serial) + IP on one line
 MIN_SIDEBAR_WIDTH = 300
 MIN_STREAM_WIDTH = 320
 MIN_STREAM_HEIGHT = 180
 SPLITTER = 6  # resize handle thickness
+LOGO_SIZE = 30  # app icon in the header
 HEADER_HEIGHT = 46
 STATUS_HEIGHT = 30
 SPACING = 8  # matches mvStyleVar_ItemSpacing y in theme.py
 THEME_LABELS = {"dark": "Dark", "light": "Light"}
+
+
+def _logo_texture(size: int) -> int | str | None:
+    """The app icon (app/resources/app.png) as a static texture; None if it cannot be read."""
+    image = cv2.imread(str(paths.resource("app.png")), cv2.IMREAD_UNCHANGED)
+    if image is None or image.ndim != 3 or image.shape[2] != 4:
+        return None
+    rgba = cv2.cvtColor(cv2.resize(image, (size, size), interpolation=cv2.INTER_AREA), cv2.COLOR_BGRA2RGBA)
+    with dpg.texture_registry():
+        return dpg.add_static_texture(size, size, (rgba.astype(np.float32) / 255).ravel())
 
 
 class MainWindow:
@@ -102,7 +116,14 @@ class MainWindow:
                     dpg.add_table_column(width_fixed=True)
                     with dpg.table_row():
                         with dpg.group(horizontal=True, horizontal_spacing=16):
-                            app_title = dpg.add_text(APP_TITLE)
+                            with dpg.group(horizontal=True, horizontal_spacing=10):
+                                logo = _logo_texture(LOGO_SIZE)
+                                if logo is not None:
+                                    dpg.add_image(logo, width=LOGO_SIZE, height=LOGO_SIZE)
+                                with theme.nudge(1):
+                                    app_title = dpg.add_text(APP_TITLE)
+                                with theme.nudge(7):
+                                    publisher = secondary_text(f"by {APP_PUBLISHER}")
                             with theme.nudge(3):
                                 with dpg.group(horizontal=True, horizontal_spacing=8):
                                     self._live_pill = dpg.add_button(label="", height=24)
@@ -115,6 +136,7 @@ class MainWindow:
             bind(header, "canvas")
             bind(header_table, "tight")
             use_font(app_title, "title")
+            use_font(publisher, "small")
             use_font(layout_caption, "small")
             for pill in (self._live_pill, self._rec_pill, self._error_pill):
                 use_font(pill, "caption")

@@ -1,5 +1,5 @@
-LUCID Camera Studio {version}
-==============================
+Apertix {version}  ·  by HWYL
+=============================
 
 Portable Windows (64-bit) application. No Python is needed on this PC.
 
@@ -19,9 +19,9 @@ Without the SDK the app still opens, but tells you that no cameras can be found.
 
 2. Copy and start the app
 -------------------------
-  - Copy the whole "LUCID Camera Studio" folder from the USB drive to the PC,
-    for example to C:\LUCID Camera Studio (or run it straight from the drive).
-  - Double-click "LUCID Camera Studio.exe".
+  - Copy the whole "Apertix" folder from the USB drive to the PC,
+    for example to C:\Apertix (or run it straight from the drive).
+  - Double-click "Apertix.exe".
     Windows SmartScreen may warn about an unknown publisher the first time:
     click "More info" > "Run anyway".
   - Optional: right-click the .exe > Send to > Desktop (create shortcut).
@@ -34,7 +34,7 @@ Keep the folder together: the .exe needs the "_internal" folder next to it.
 Settings (config.json), logs, recordings, snapshots, profiles and sessions are stored
 next to the .exe when that folder is writable (portable use). If the app is in a
 protected folder such as C:\Program Files, they go to
-Documents\LUCID Camera Studio instead.
+Documents\Apertix instead.
 
 
 4. Network setup for GigE cameras (recommended)

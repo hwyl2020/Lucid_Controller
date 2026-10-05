@@ -14,7 +14,7 @@ def test_from_source_uses_the_current_directory(tmp_path, monkeypatch):
 
 def test_packaged_app_is_portable_when_its_folder_is_writable(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "LUCID Camera Studio.exe"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Apertix.exe"))
     assert paths.data_dir() == tmp_path
 
 
@@ -24,7 +24,7 @@ def test_packaged_app_in_a_protected_folder_uses_documents(tmp_path, monkeypatch
     monkeypatch.setattr(paths, "is_writable", lambda folder: False)
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "user"))
     folder = paths.data_dir()
-    assert folder == tmp_path / "user" / "Documents" / "LUCID Camera Studio"
+    assert folder == tmp_path / "user" / "Documents" / "Apertix"
     assert folder.is_dir()
 
 

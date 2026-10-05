@@ -1,6 +1,6 @@
 """Entry point: python -m app.main [--config PATH] [--log-level LEVEL] [--simulators N] [--no-arena]
 
-Also the entry point of the packaged Windows app (``LUCID Camera Studio.exe``, see packaging/):
+Also the entry point of the packaged Windows app (``Apertix.exe``, see installer/):
 there the data folder comes from ``app.paths`` and no simulator cameras are added unless asked for.
 """
 
@@ -75,7 +75,7 @@ def add_arena_cameras(manager: CameraManager) -> int:
 SDK_MISSING_TEXT = (
     "The LUCID Arena SDK is not installed on this PC, so cameras cannot be found.\n\n"
     "Install the Arena SDK for Windows (64-bit) from LUCID Vision Labs (thinklucid.com > Downloads), "
-    "then restart LUCID Camera Studio.\n\nDetails: {error}"
+    "then restart Apertix.\n\nDetails: {error}"
 )
 
 

@@ -3,7 +3,7 @@
 From source (``python -m app.main``) everything is relative to the current directory, as before.
 As a packaged Windows app (PyInstaller, ``sys.frozen``) the data lives next to the .exe when that
 folder is writable (portable use, e.g. from a USB drive), otherwise in
-``Documents\\LUCID Camera Studio`` (e.g. when installed under Program Files).
+``Documents\\Apertix`` (e.g. when installed under Program Files).
 """
 
 from __future__ import annotations
@@ -13,7 +13,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-DATA_FOLDER_NAME = "LUCID Camera Studio"
+from app import APP_NAME
+
+DATA_FOLDER_NAME = APP_NAME
 
 
 def is_frozen() -> bool:

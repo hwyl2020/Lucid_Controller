@@ -1,4 +1,4 @@
-"""PyInstaller entry script for LUCID Camera Studio.exe (the app itself lives in app.main)."""
+"""PyInstaller entry script for Apertix.exe (the app itself lives in app.main)."""
 
 from app.main import main
 
