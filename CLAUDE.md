@@ -27,7 +27,7 @@ python -m venv --system-site-packages .venv
 .venv\Scripts\python -m pytest                                               # all tests
 .venv\Scripts\python -m pytest tests/test_configuration.py::test_name        # single test
 .venv\Scripts\python -m pip install -r requirements-build.txt               # once: PyInstaller
-.venv\Scripts\python -m installer.build                                     # Windows package -> dist/
+.venv\Scripts\python -m installer.build                                     # Windows package + Setup.exe -> dist/
 ```
 
 - `config.json` (gitignored) is optional. It is merged over `DEFAULT_CONFIG` in `app/services/configuration.py`, so only overrides need to be written.
@@ -291,6 +291,13 @@ Recording output layout: `Recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_N
   - Output: a one-folder, windowed `dist/Apertix/` (`Apertix.exe` + `_internal/` + `README_FIRST.txt`) and `dist/Apertix_<version>_win64.zip`, about 157 MB.
   - The version comes from `app.__version__`; `build/` and `dist/` are gitignored.
   - The folder is named `installer/`, not `packaging/`, because `packaging` would shadow the PyPI package that pip and PyInstaller import.
+- **Setup.exe** (`installer/apertix.iss`, Inno Setup 6, installed with `winget install --id JRSoftware.InnoSetup -e`):
+  - `build.py` runs ISCC after PyInstaller when it is found (`--no-installer` skips it) and writes `dist/Apertix_Setup_<version>.exe` (~44 MB).
+  - It installs for all users (Program Files, admin) or the current user (no admin). It adds Start menu shortcuts and an optional desktop icon.
+  - It warns if the Arena SDK registry key is missing, without blocking the install.
+  - The optional firewall rule (admin installs only) is `netsh advfirewall`, and the uninstaller removes it. The uninstaller keeps user data.
+  - **Keep `AppId` fixed**: upgrades depend on it.
+  - Verified: a silent per-user install, launch (camera discovered) and uninstall.
 - **Target PC requirement:** the LUCID Arena SDK (64-bit) must be installed. The bundled `arena_api` finds `ArenaC_v140.dll` through the SDK's registry key (`HKLM\SOFTWARE\Lucid Vision Labs\Arena SDK`, `InstallFolder`), and the SDK also installs the GigE filter driver. The SDK's DLLs are not bundled: redistribution is not cleared and the driver needs an installer.
   - In the packaged app, a missing SDK shows an "Arena SDK not found" dialog, and no simulators are added unless `--simulators` is given.
 - **Data folder** (`app/paths.py`):

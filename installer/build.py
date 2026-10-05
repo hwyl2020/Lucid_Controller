@@ -1,7 +1,9 @@
-"""Build the portable Windows app: dist/Apertix/ plus a zip of it.
+"""Build the Windows app: dist/Apertix/ (portable folder), a zip of it and, when Inno Setup 6 is
+installed, dist/Apertix_Setup_<version>.exe (installer/apertix.iss).
 
     .venv\\Scripts\\python -m pip install -r requirements-build.txt
-    .venv\\Scripts\\python -m installer.build
+    winget install --id JRSoftware.InnoSetup -e        (once, for the Setup.exe)
+    .venv\\Scripts\\python -m installer.build [--no-installer]
 
 The result runs on any 64-bit Windows 10/11 PC without Python; that PC needs the LUCID Arena SDK
 installed (see installer/README_FIRST.txt, which is copied into the folder).
@@ -9,6 +11,7 @@ installed (see installer/README_FIRST.txt, which is copied into the folder).
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -40,6 +43,30 @@ VERSION_INFO = """VSVersionInfo(
 """
 
 
+def find_iscc() -> Path | None:
+    """Inno Setup's command-line compiler (machine-wide or per-user install), or None."""
+    found = shutil.which("ISCC")
+    if found:
+        return Path(found)
+    roots = [os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"),
+             os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs")]
+    for root in filter(None, roots):
+        candidate = Path(root) / "Inno Setup 6" / "ISCC.exe"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def build_installer() -> Path | None:
+    iscc = find_iscc()
+    if iscc is None:
+        print("\nInno Setup 6 not found: skipped Setup.exe (winget install --id JRSoftware.InnoSetup -e)")
+        return None
+    subprocess.run([str(iscc), "/Q", f"/DAppVersion={__version__}", f"/DAppPublisher={APP_PUBLISHER}",
+                    str(ROOT / "installer" / "apertix.iss")], check=True, cwd=ROOT / "installer")
+    return DIST / f"{APP_TITLE}_Setup_{__version__}.exe"
+
+
 def main() -> None:
     parts = [int(p) for p in __version__.split(".")][:4]
     v4 = tuple(parts + [0] * (4 - len(parts)))
@@ -57,6 +84,10 @@ def main() -> None:
     archive = shutil.make_archive(str(DIST / f"Apertix_{__version__}_win64"), "zip", DIST, APP_TITLE)
     size_mb = sum(f.stat().st_size for f in APP_DIR.rglob("*") if f.is_file()) / 1e6
     print(f"\nBuilt {APP_DIR} ({size_mb:.0f} MB)\nZip:  {archive}")
+    if "--no-installer" not in sys.argv:
+        setup = build_installer()
+        if setup is not None:
+            print(f"Setup: {setup} ({setup.stat().st_size / 1e6:.0f} MB)")
 
 
 if __name__ == "__main__":
