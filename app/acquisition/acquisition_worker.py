@@ -12,6 +12,7 @@ from app.acquisition.frame import Frame
 from app.acquisition.frame_queue import LatestFrameQueue, RecordingQueue
 from app.cameras.camera_device import CameraDevice, CameraError, FrameTimeoutError
 from app.models.units import bytes_per_second_to_mbps
+from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class AcquisitionWorker:
         on_error: Callable[[str, Exception], None] | None = None,
     ) -> None:
         self._camera = camera
+        self._log = camera_logger(logger, camera.camera_id)
         self._display_queue = display_queue
         self._frame_timeout = frame_timeout
         self._on_error = on_error
@@ -74,7 +76,7 @@ class AcquisitionWorker:
         if self._thread.is_alive():
             self._thread.join(timeout)
         if self._thread.is_alive():
-            logger.warning("Acquisition thread for %s did not stop within %.1fs", self.camera_id, timeout)
+            self._log.warning("Acquisition thread for %s did not stop within %.1fs", self.camera_id, timeout)
             return False
         return True
 
@@ -89,7 +91,7 @@ class AcquisitionWorker:
         except Exception as exc:  # noqa: BLE001 - reported, never crashes the app
             self._fail(exc)
             return
-        logger.info("Acquisition started for %s", camera.camera_id)
+        self._log.info("Acquisition started for %s", camera.camera_id)
 
         window_start = time.perf_counter()
         window_frames = 0
@@ -136,14 +138,14 @@ class AcquisitionWorker:
             try:
                 camera.stop_acquisition()
             except CameraError as exc:
-                logger.debug("stop_acquisition for %s failed: %s", camera.camera_id, exc)
-            logger.info("Acquisition stopped for %s", camera.camera_id)
+                self._log.debug("stop_acquisition for %s failed: %s", camera.camera_id, exc)
+            self._log.info("Acquisition stopped for %s", camera.camera_id)
 
     def _fail(self, exc: Exception) -> None:
         if isinstance(exc, CameraError):
-            logger.error("Acquisition error on %s: %s", self.camera_id, exc)
+            self._log.error("Acquisition error on %s: %s", self.camera_id, exc)
         else:
-            logger.exception("Unexpected acquisition failure on %s", self.camera_id)
+            self._log.exception("Unexpected acquisition failure on %s", self.camera_id)
         with self._stats_lock:
             self._stats = replace(self._stats, error=str(exc) or type(exc).__name__)
         if self._on_error is not None:

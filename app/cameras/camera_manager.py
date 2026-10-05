@@ -14,6 +14,7 @@ from app.acquisition.frame import Frame
 from app.acquisition.frame_queue import LatestFrameQueue, RecordingQueue
 from app.cameras.camera_device import CameraDevice, CameraError
 from app.models.camera_state import CameraState
+from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +61,13 @@ class CameraManager:
         with self._lock:
             self._errors.pop(camera_id, None)
         camera.connect()
-        logger.info("Connected %s (%s, S/N %s)", camera_id, camera.model, camera.serial_number)
+        logger.info("Connected %s (%s, S/N %s)", camera_id, camera.model, camera.serial_number, extra=for_camera(camera_id))
 
     def disconnect(self, camera_id: str) -> None:
         camera = self.camera(camera_id)
         self.stop_streaming(camera_id)
         camera.disconnect()
-        logger.info("Disconnected %s", camera_id)
+        logger.info("Disconnected %s", camera_id, extra=for_camera(camera_id))
 
     def start_streaming(self, camera_id: str) -> None:
         camera = self.camera(camera_id)
@@ -120,11 +121,11 @@ class CameraManager:
         try:
             camera.disconnect()  # release a stale handle
         except CameraError as exc:
-            logger.debug("Cleanup before reconnecting %s: %s", camera_id, exc)
+            logger.debug("Cleanup before reconnecting %s: %s", camera_id, exc, extra=for_camera(camera_id))
         camera.connect()
         with self._lock:
             self._errors.pop(camera_id, None)
-        logger.info("Reconnected %s", camera_id)
+        logger.info("Reconnected %s", camera_id, extra=for_camera(camera_id))
         if resume:
             self.start_streaming(camera_id)
 
@@ -154,7 +155,7 @@ class CameraManager:
             try:
                 self.disconnect(camera_id)
             except CameraError as exc:
-                logger.warning("Error disconnecting %s during shutdown: %s", camera_id, exc)
+                logger.warning("Error disconnecting %s during shutdown: %s", camera_id, exc, extra=for_camera(camera_id))
 
     # --- queries (cheap; safe to call every UI frame) ---------------------
     def latest_frame(self, camera_id: str) -> Frame | None:

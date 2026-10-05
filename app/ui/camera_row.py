@@ -33,6 +33,7 @@ from app.services.profile_service import ProfileService
 from app.services.recording_service import RecordingError, RecordingService
 from app.ui import dialogs
 from app.ui.theme import STATE_COLORS, TEXT_DIM, compact_table_theme, plain_button_theme, use_font
+from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class CameraRow:
         on_property_grid: Callable[[str], None],
     ) -> None:
         self.camera_id = status.camera_id
+        self._log = camera_logger(logger, status.camera_id)
         self._manager = manager
         self._statuses = statuses
         self._recording = recording
@@ -223,7 +225,7 @@ class CameraRow:
                 else:
                     self._manager.disconnect(cid)
         except (CameraError, ValueError) as exc:
-            logger.error("Could not %s %s: %s", action, cid, exc)
+            self._log.error("Could not %s %s: %s", action, cid, exc)
             self._notice = (str(exc), True)
         finally:
             self._pending = None

@@ -17,6 +17,7 @@ from pathlib import Path
 from app.cameras.camera_device import CameraError, Roi
 from app.cameras.camera_manager import CameraManager
 from app.services.camera_control_service import CameraControlService
+from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class SettingsApplier:
             except CameraError as exc:
                 warnings.append(f"{label}: {exc}")
         for warning in warnings:
-            logger.warning("Applying settings to %s: %s", camera_id, warning)
+            logger.warning("Applying settings to %s: %s", camera_id, warning, extra=for_camera(camera_id))
         return warnings
 
 
@@ -122,7 +123,7 @@ class ProfileService:
             "settings": settings.to_dict(),
         }
         path.write_text(json.dumps(document, indent=2), encoding="utf-8")
-        logger.info("Saved profile %r from %s to %s", name, camera_id, path)
+        logger.info("Saved profile %r from %s to %s", name, camera_id, path, extra=for_camera(camera_id))
         return path
 
     def apply(self, camera_id: str, name: str) -> list[str]:
@@ -136,7 +137,7 @@ class ProfileService:
         if document.get("model") and document["model"] != camera.model:
             warnings.append(f"profile was saved from a {document['model']}; values were clamped to this {camera.model}")
         warnings += self._applier.apply(camera_id, CameraSettings.from_dict(document.get("settings", {})))
-        logger.info("Applied profile %r to %s (%d warning(s))", name, camera_id, len(warnings))
+        logger.info("Applied profile %r to %s (%d warning(s))", name, camera_id, len(warnings), extra=for_camera(camera_id))
         return warnings
 
     def _path(self, name: str) -> Path:

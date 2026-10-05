@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from app.cameras.camera_device import CameraDisconnectedError, CameraError
 from app.cameras.camera_manager import CameraManager
 from app.models.camera_state import CameraState
+from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ class ReconnectService:
                     continue
                 entry["attempts"] += 1
                 attempt = entry["attempts"]
-            logger.info("Reconnecting %s (attempt %d)", camera_id, attempt)
+            logger.info("Reconnecting %s (attempt %d)", camera_id, attempt, extra=for_camera(camera_id))
             try:
                 self._manager.reconnect(camera_id)
             except CameraError as exc:
@@ -91,7 +92,7 @@ class ReconnectService:
                     base = max(self._initial_delay, 0.1)
                     entry["delay"] = min(base * 2 ** (attempt - 1), self._max_delay)
                     entry["next_at"] = time.monotonic() + entry["delay"]
-                logger.info("Reconnect of %s failed (%s); retrying in %.0fs", camera_id, exc, entry["delay"])
+                logger.info("Reconnect of %s failed (%s); retrying in %.0fs", camera_id, exc, entry["delay"], extra=for_camera(camera_id))
             else:
                 with self._lock:
                     self._pending.pop(camera_id, None)

@@ -40,6 +40,7 @@ from app.cameras.camera_device import (
 from app.cameras.camera_discovery import ArenaDeviceInfo, all_device_infos, force_ip, host_interfaces
 from app.cameras.network import ForceIpPlan, reachable_interface
 from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
+from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ class ArenaCamera(CameraDevice):
     def __init__(self, info: ArenaDeviceInfo, num_buffers: int = DEFAULT_NUM_BUFFERS) -> None:
         self._info = info
         self._num_buffers = num_buffers
+        self._log = camera_logger(logger, info.serial)
         self._lock = threading.RLock()
         self._device = None
         self._acquiring = False
@@ -139,7 +141,7 @@ class ArenaCamera(CameraDevice):
 
             for name, value in STREAM_SETTINGS.items():
                 self._try_set(self._device.tl_stream_nodemap, name, value)
-            logger.info("Opened %s S/N %s at %s", self.model, self.serial_number, self._info.ip)
+            self._log.info("Opened %s S/N %s at %s", self.model, self.serial_number, self._info.ip)
 
     def disconnect(self) -> None:
         with self._lock:
@@ -168,7 +170,7 @@ class ArenaCamera(CameraDevice):
                 try:
                     self._device.stop_stream()
                 except Exception as exc:  # noqa: BLE001 - device may already be gone
-                    logger.warning("%s: stop_stream failed: %s", self.camera_id, _short(exc))
+                    self._log.warning("%s: stop_stream failed: %s", self.camera_id, _short(exc))
 
     def get_frame(self, timeout: float = 1.0) -> Frame:
         device = self._device
@@ -190,7 +192,7 @@ class ArenaCamera(CameraDevice):
             if buffer.is_incomplete:
                 self.incomplete_frames += 1
                 if self.incomplete_frames == 1 or self.incomplete_frames % 100 == 0:
-                    logger.warning("%s: %d incomplete frame(s) discarded", self.camera_id, self.incomplete_frames)
+                    self._log.warning("%s: %d incomplete frame(s) discarded", self.camera_id, self.incomplete_frames)
                 raise IncompleteFrameError(f"{self.camera_id}: incomplete frame")
             frame_id = int(buffer.frame_id)
             self._track_gaps(frame_id)
@@ -208,7 +210,7 @@ class ArenaCamera(CameraDevice):
             try:
                 device.requeue_buffer(buffer)
             except Exception as exc:  # noqa: BLE001
-                logger.debug("%s: requeue failed: %s", self.camera_id, _short(exc))
+                self._log.debug("%s: requeue failed: %s", self.camera_id, _short(exc))
 
     # --- capabilities -----------------------------------------------------
     def exposure_range(self) -> NumericRange | None:
@@ -227,7 +229,7 @@ class ArenaCamera(CameraDevice):
         try:
             return [name for name, entry in node.enumentry_nodes.items() if entry.is_readable]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("%s: could not list pixel formats: %s", self.camera_id, _short(exc))
+            self._log.warning("%s: could not list pixel formats: %s", self.camera_id, _short(exc))
             return []
 
     def roi_limits(self) -> RoiLimits | None:
@@ -365,7 +367,7 @@ class ArenaCamera(CameraDevice):
         try:
             children = node.features
         except Exception as exc:  # noqa: BLE001
-            logger.debug("%s: cannot list category %s: %s", self.camera_id, node.name, _short(exc))
+            self._log.debug("%s: cannot list category %s: %s", self.camera_id, node.name, _short(exc))
             children = {}
         for child in children.values():
             try:
@@ -406,7 +408,7 @@ class ArenaCamera(CameraDevice):
         if last is not None and frame_id > last + 1:
             missed = frame_id - last - 1
             self.missed_frames += missed
-            logger.warning(
+            self._log.warning(
                 "%s: %d frame(s) missed before #%d (total %d)", self.camera_id, missed, frame_id, self.missed_frames
             )
 
@@ -444,7 +446,7 @@ class ArenaCamera(CameraDevice):
         try:
             return node.value
         except Exception as exc:  # noqa: BLE001
-            logger.debug("%s: reading %s failed: %s", self.camera_id, name, _short(exc))
+            self._log.debug("%s: reading %s failed: %s", self.camera_id, name, _short(exc))
             return None
 
     def _range(self, name: str) -> NumericRange | None:
@@ -455,7 +457,7 @@ class ArenaCamera(CameraDevice):
             inc = node.inc
             return NumericRange(float(node.min), float(node.max), float(inc) if inc else None)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("%s: range of %s unavailable: %s", self.camera_id, name, _short(exc))
+            self._log.debug("%s: range of %s unavailable: %s", self.camera_id, name, _short(exc))
             return None
 
     def _set_numeric(self, name: str, value: float, label: str) -> None:
@@ -485,15 +487,15 @@ class ArenaCamera(CameraDevice):
         """Best-effort write for optional features: log and continue on failure."""
         node = self._node(nodemap, name)
         if node is None:
-            logger.info("%s: optional node %s not present", self.camera_id, name)
+            self._log.info("%s: optional node %s not present", self.camera_id, name)
             return
         try:
             if node.is_writable:
                 node.value = value
             else:
-                logger.info("%s: optional node %s not writable", self.camera_id, name)
+                self._log.info("%s: optional node %s not writable", self.camera_id, name)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("%s: setting %s=%r failed: %s", self.camera_id, name, value, _short(exc))
+            self._log.warning("%s: setting %s=%r failed: %s", self.camera_id, name, value, _short(exc))
 
     # --- state helpers ----------------------------------------------------
     def _require_device(self):
@@ -536,7 +538,7 @@ class ArenaCamera(CameraDevice):
             mine = next((d for d in all_device_infos(500) if d.mac == self._info.mac), None)
             if mine is not None and mine.ip == plan.ip:
                 self._info = mine
-                logger.info("%s: IP forced %s -> %s (adapter %s)", self.camera_id, old_ip, plan.ip, plan.interface)
+                self._log.info("%s: IP forced %s -> %s (adapter %s)", self.camera_id, old_ip, plan.ip, plan.interface)
                 return
         raise CameraError(f"{self.camera_id}: camera did not take IP {plan.ip} within {timeout_s:.0f}s")
 
@@ -547,9 +549,9 @@ class ArenaCamera(CameraDevice):
             return
         try:
             arena_sdk.load().system.destroy_device(device)
-            logger.info("Closed %s S/N %s", self.model, self.serial_number)
+            self._log.info("Closed %s S/N %s", self.model, self.serial_number)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("%s: destroy_device failed: %s", self.camera_id, _short(exc))
+            self._log.warning("%s: destroy_device failed: %s", self.camera_id, _short(exc))
 
     def _translate(self, exc: Exception, action: str) -> CameraError:
         if isinstance(exc, CameraError):

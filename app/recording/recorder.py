@@ -20,6 +20,7 @@ import numpy as np
 
 from app.acquisition.frame import Frame
 from app.acquisition.frame_queue import RecordingQueue
+from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ class CameraRecorder:
     def __init__(self, camera_id: str, writer: FrameWriter, queue: RecordingQueue) -> None:
         self.camera_id = camera_id
         self._writer = writer
+        self._log = camera_logger(logger, camera_id)
         self._queue = queue
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -131,7 +133,7 @@ class CameraRecorder:
         self._stop.set()
         self._thread.join(timeout)
         if self._thread.is_alive():
-            logger.error("Recorder for %s did not finish within %.0fs", self.camera_id, timeout)
+            self._log.error("Recorder for %s did not finish within %.0fs", self.camera_id, timeout)
         return self.stats()
 
     def stats(self) -> RecorderStats:
@@ -156,14 +158,14 @@ class CameraRecorder:
                         frame_gaps=self._stats.frame_gaps + gaps,
                     )
         except Exception as exc:  # noqa: BLE001 - disk full, permissions, encoder failure...
-            logger.error("Recording failed for %s: %s", self.camera_id, exc)
+            self._log.error("Recording failed for %s: %s", self.camera_id, exc)
             with self._lock:
                 self._stats = replace(self._stats, error=str(exc) or type(exc).__name__)
         finally:
             try:
                 self._writer.close()
             except Exception as exc:  # noqa: BLE001
-                logger.error("Closing recording for %s failed: %s", self.camera_id, exc)
+                self._log.error("Closing recording for %s failed: %s", self.camera_id, exc)
 
     def _gap_before(self, frame_id: int) -> int:
         last, self._last_frame_id = self._last_frame_id, frame_id

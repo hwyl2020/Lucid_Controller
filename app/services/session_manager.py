@@ -18,6 +18,7 @@ from app.cameras.camera_device import CameraError
 from app.cameras.camera_manager import CameraManager
 from app.models.camera_state import CameraState
 from app.services.profile_service import CameraSettings, SettingsApplier
+from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class SessionManager:
                 try:
                     entry["settings"] = self._applier.capture(camera_id).to_dict()
                 except CameraError as exc:
-                    logger.warning("Session %r: could not read settings of %s: %s", name, camera_id, exc)
+                    logger.warning("Session %r: could not read settings of %s: %s", name, camera_id, exc, extra=for_camera(camera_id))
             cameras[camera_id] = entry
         self._directory.mkdir(parents=True, exist_ok=True)
         path = self._path(name)

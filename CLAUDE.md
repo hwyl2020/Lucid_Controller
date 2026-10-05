@@ -168,6 +168,12 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Per-camera status:** `CameraStatusService` builds `CameraStatus` (identity, IP, state, `bandwidth_mbps`, fps, `frame_count`, missed, timeouts). It is the single source for the sidebar, the status cards and the Performance window. Don't recompute these figures elsewhere.
 - **Units:** data rates are **Mb/s (megabits) everywhere**, via `models/units.py` (`bytes/s × 8 / 1e6`). Never display `MB/s`.
 - **Logs:**
+  - **Per-camera tagging** (`app/camera_log.py`): records about a camera carry a `camera_id` attribute.
+    - Per-camera objects log through `self._log = camera_logger(logger, camera_id)`: ArenaCamera, SimulatorCamera, AcquisitionWorker, CameraRecorder, CameraRow, PropertyGridWindow.
+    - Functions that receive a camera id pass `extra=for_camera(camera_id)`.
+    - Untagged records are application-wide ("System"). **New camera-related log calls must be tagged.**
+    - The log file format includes `[%(camera_id)s]` (`-` when untagged), via `CameraFieldFilter` on the handlers.
+  - The Logs panel shows a Camera column (`Model (Serial)`, or "System") and a camera filter (All cameras / System / one camera).
   - `services/log_buffer.LogBuffer` is a thread-safe bounded `logging.Handler`, installed in `main.py` right after `setup_logging`.
   - The panel pulls entries incrementally (`since(seq)`) at `ui.stats_refresh_hz`, keeps at most 1000 rows, and uses a table clipper.
   - Filter segments: All, Debug, Info, Warning, Error. Each shows that exact level; Error also includes Critical.
@@ -190,7 +196,8 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Removed on request:** the old "Camera Settings" sidebar panel (exposure/gain/FPS/format/ROI) and Start all / Stop all (buttons and menu items). The Property Grid covers those settings. `CameraControlService` stays, because profiles and sessions use it.
 - **Per-camera recording:**
   - `RecordingService` runs several sessions at once. `start(mode, [id])` and `stop([id])` affect only those cameras, and a camera is in at most one active session.
-  - `camera_recording(id)` gives the per-row state. The toolbar's Record/Stop still means "all streaming cameras not already recording" / "everything".
+  - `camera_recording(id)` gives the per-row state. `start()` / `stop()` without ids still mean "all streaming cameras not already recording" / "everything" (used by sessions and shutdown).
+  - **There are no global record/snapshot controls:** the header toolbar (Record, format, Snapshot) was removed on request, because each camera row has its own. `MainWindow.update()` calls `recording.status()` every frame, which also enforces the low-disk auto-stop. The status bar (`ui/status_bar.py`) shows the recording summary or the last recording error.
   - A session's `session.json` is finalised when its last camera stops.
 - **Video formats:**
   - Raw, MP4 (mp4v), AVI (MJPG), MOV (mp4v) and MKV (XVID), each verified to write and read back with the bundled OpenCV/FFmpeg.

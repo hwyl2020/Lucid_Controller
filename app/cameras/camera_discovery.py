@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from app.cameras import arena_sdk
 from app.cameras.camera_device import CameraError
 from app.cameras.network import HostInterface
+from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def discover_arena_cameras(timeout_ms: int = 1000) -> list[ArenaDeviceInfo]:
     except Exception as exc:  # noqa: BLE001 - SDK raises plain Exception
         raise CameraError(f"Camera discovery failed: {exc}") from exc
     for info in infos:
-        logger.info("Discovered %s S/N %s at %s (fw %s)", info.model, info.serial, info.ip, info.firmware)
+        logger.info("Discovered %s S/N %s at %s (fw %s)", info.model, info.serial, info.ip, info.firmware, extra=for_camera(info.serial))
     if not infos:
         logger.info("No Arena cameras discovered")
     return infos

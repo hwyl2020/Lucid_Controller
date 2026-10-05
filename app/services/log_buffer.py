@@ -11,6 +11,8 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 
+from app.camera_log import record_camera
+
 DEFAULT_CAPACITY = 5000
 
 
@@ -22,6 +24,7 @@ class LogEntry:
     level: str
     logger: str
     message: str
+    camera_id: str | None = None  # camera the record concerns (None = application-wide)
 
 
 class LogBuffer(logging.Handler):
@@ -39,7 +42,8 @@ class LogBuffer(logging.Handler):
             with self._lock_entries:
                 self._seq += 1
                 self._entries.append(
-                    LogEntry(self._seq, record.created, record.levelno, record.levelname, record.name, message)
+                    LogEntry(self._seq, record.created, record.levelno, record.levelname, record.name, message,
+                             record_camera(record))
                 )
         except Exception:  # noqa: BLE001 - logging must never raise into callers
             self.handleError(record)

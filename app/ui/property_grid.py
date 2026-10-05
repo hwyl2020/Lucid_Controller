@@ -19,6 +19,7 @@ from app.models.camera_state import CameraState
 from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
 from app.services.feature_service import FeatureService, matches
 from app.ui.theme import STATE_COLORS, TEXT_DIM, WARNING_COLOR, compact_table_theme, use_font
+from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class PropertyGridWindow:
                  state_of: Callable[[str], CameraState], pos: tuple[int, int] = (220, 90)) -> None:
         self.camera_id = camera_id
         self._features = features
+        self._log = camera_logger(logger, camera_id)
         self._state_of = state_of
         self._last_state = state_of(camera_id)
         self._on_close = on_close
@@ -120,7 +122,7 @@ class PropertyGridWindow:
             except CameraError as exc:
                 result = (None, str(exc))
             except Exception as exc:  # noqa: BLE001 - shown in the window, never crashes the app
-                logger.exception("Reading features of %s failed", self.camera_id)
+                self._log.exception("Reading features of %s failed", self.camera_id)
                 result = (None, f"Reading features failed: {exc}")
             with self._lock:
                 self._pending = result

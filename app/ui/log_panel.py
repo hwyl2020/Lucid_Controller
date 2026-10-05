@@ -1,6 +1,8 @@
-"""Collapsible "Logs" section: timestamp / level / message rows from the in-memory LogBuffer.
+"""Collapsible "Logs" section: time / level / camera / message rows from the in-memory LogBuffer.
 
-Controls: level filter (All | Debug | Info | Warning | Error), auto-scroll, clear. New entries are
+Each row shows the camera the record concerns (``Model (Serial)``; "System" for application-wide
+records), from the ``camera_id`` tag set by ``app.camera_log``. Controls: level filter
+(All | Debug | Info | Warning | Error), camera filter, auto-scroll, clear. New entries are
 pulled from the buffer at ``refresh_hz``; logging threads never wait on the UI. The table uses a
 clipper so only visible rows are drawn, and keeps at most ``MAX_ROWS`` rows.
 """
@@ -9,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 
 import dearpygui.dearpygui as dpg
 
@@ -27,6 +30,9 @@ from app.ui.theme import (
 MAX_ROWS = 1000
 PANEL_HEIGHT = 170
 FILTERS = ("All", "Debug", "Info", "Warning", "Error")
+ALL_CAMERAS = "All cameras"
+SYSTEM = "System (no camera)"
+CAMERA_COLUMN_WIDTH = 190
 LEVEL_COLORS = {
     logging.DEBUG: TEXT_DIM,
     logging.INFO: THEME_TEXT,
@@ -45,11 +51,29 @@ def matches(entry: LogEntry, level_filter: str) -> bool:
     return entry.level == level_filter.upper()
 
 
+def matches_camera(entry: LogEntry, camera_filter: str | None) -> bool:
+    """``None`` = all cameras, ``""`` = application-wide records only, else that camera's id."""
+    if camera_filter is None:
+        return True
+    if camera_filter == "":
+        return entry.camera_id is None
+    return entry.camera_id == camera_filter
+
+
 class LogPanel:
     def __init__(
-        self, parent: int | str, buffer: LogBuffer, refresh_hz: float, default_open: bool = False, theme: str = "dark"
+        self,
+        parent: int | str,
+        buffer: LogBuffer,
+        refresh_hz: float,
+        default_open: bool = False,
+        theme: str = "dark",
+        camera_names: Callable[[], dict[str, str]] = dict,
     ) -> None:
         self._buffer = buffer
+        self._camera_names = camera_names  # camera_id -> "Model (Serial)"
+        self._names: dict[str, str] = {}
+        self._camera_filter: str | None = None
         self._interval = 1.0 / max(refresh_hz, 0.5)
         self._last_refresh = 0.0
         self._last_seq = 0
@@ -69,6 +93,9 @@ class LogPanel:
                             label=name, width=72, callback=lambda _s, _a, n: self.set_filter(n), user_data=name
                         )
                 dpg.add_spacer(width=12)
+                self._camera_combo = dpg.add_combo([ALL_CAMERAS, SYSTEM], default_value=ALL_CAMERAS, width=230,
+                                                   callback=lambda _s, label: self._on_camera_filter(label))
+                dpg.add_spacer(width=12)
                 self._autoscroll = dpg.add_checkbox(label="Auto-scroll", default_value=True)
                 dpg.add_spacer(width=4)
                 dpg.add_button(label="Clear", width=70, callback=self.clear)
@@ -81,6 +108,7 @@ class LogPanel:
                                borders_outerV=False, policy=dpg.mvTable_SizingFixedFit) as self._table:
                     dpg.add_table_column(width_fixed=True, init_width_or_weight=78)
                     dpg.add_table_column(width_fixed=True, init_width_or_weight=78)
+                    dpg.add_table_column(width_fixed=True, init_width_or_weight=CAMERA_COLUMN_WIDTH)
                     dpg.add_table_column(width_stretch=True)
             dpg.bind_item_theme(self._table, compact_table_theme())
         self._was_open = self.is_open
@@ -103,6 +131,28 @@ class LogPanel:
         self._level_filter = level_filter
         self._show_selected_segment()
         self._mark_dirty()
+
+    @property
+    def camera_filter(self) -> str | None:
+        return self._camera_filter
+
+    def set_camera_filter(self, camera_id: str | None) -> None:
+        """``None`` = all cameras, ``""`` = application-wide only, else one camera id."""
+        self._refresh_camera_names()
+        self._camera_filter = camera_id
+        label = ALL_CAMERAS if camera_id is None else SYSTEM if camera_id == "" else self._names.get(camera_id, camera_id)
+        dpg.set_value(self._camera_combo, label)
+        self._mark_dirty()
+
+    def _on_camera_filter(self, label: str) -> None:
+        by_label = {name: cid for cid, name in self._names.items()}
+        self.set_camera_filter(None if label == ALL_CAMERAS else "" if label == SYSTEM else by_label.get(label))
+
+    def _refresh_camera_names(self) -> None:
+        names = dict(self._camera_names())
+        if names != self._names:
+            self._names = names
+            dpg.configure_item(self._camera_combo, items=[ALL_CAMERAS, SYSTEM, *names.values()])
 
     def set_theme(self, theme: str) -> None:
         self._segment_theme = segment_selected_theme(theme)
@@ -140,6 +190,7 @@ class LogPanel:
         self._last_refresh = now
 
         level_filter = self.level_filter
+        self._refresh_camera_names()
         if self._dirty:
             self._delete_rows()
             entries = self._buffer.entries()
@@ -149,7 +200,8 @@ class LogPanel:
             entries = self._buffer.since(self._last_seq)
         if entries:
             self._last_seq = entries[-1].seq
-            new = [e for e in entries if matches(e, level_filter)][-MAX_ROWS:]
+            new = [e for e in entries if matches(e, level_filter) and matches_camera(e, self._camera_filter)]
+            new = new[-MAX_ROWS:]
             for entry in new:
                 self._add_row(entry)
             overflow = len(self._rows) - MAX_ROWS
@@ -163,9 +215,12 @@ class LogPanel:
         color = LEVEL_COLORS.get(entry.levelno, THEME_TEXT)
         with dpg.table_row(parent=self._table) as row:
             stamp = time.strftime("%H:%M:%S", time.localtime(entry.timestamp))
-            for text, text_color in ((stamp, TEXT_DIM), (entry.level, color), (entry.message, THEME_TEXT)):
+            camera = self._names.get(entry.camera_id, entry.camera_id) if entry.camera_id else "System"
+            for text, text_color, font in ((stamp, TEXT_DIM, "mono"), (entry.level, color, "mono"),
+                                           (camera, THEME_TEXT if entry.camera_id else TEXT_DIM, "body"),
+                                           (entry.message, THEME_TEXT, "mono")):
                 item = dpg.add_text(text, color=text_color)
-                use_font(item, "mono")
+                use_font(item, font)
             if entry.levelno >= logging.ERROR:
                 dpg.configure_item(item, color=color)
         self._rows.append(row)

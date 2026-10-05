@@ -1,4 +1,6 @@
-"""Main window: menu bar, header toolbar, camera sidebar, multiview, status bar."""
+"""Main window: menu bar, header, camera sidebar, multiview, status/log sections, status bar.
+
+Recording and snapshots are per camera (camera rows); the header has no global record controls."""
 
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from app.ui.property_grid import PropertyGridWindow
 from app.ui.settings_window import SettingsWindow
 from app.ui.status_panel import StatusPanel
 from app.ui.theme import STATE_COLORS, TEXT_DIM, create_theme, load_fonts, square_window_theme, use_font
-from app.ui.toolbar import Toolbar, format_recording_status
+from app.ui.status_bar import format_recording_status
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +76,6 @@ class MainWindow:
                     use_font(app_title, "heading")
                     dpg.add_spacer(width=24)
                     self._header_status = dpg.add_text("", color=TEXT_DIM)
-                    dpg.add_spacer(width=24)
-                    with dpg.group() as toolbar_parent:
-                        self._toolbar = Toolbar(toolbar_parent, services.recording)
 
             with dpg.group(horizontal=True):
                 with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8) as sidebar:
@@ -98,6 +97,7 @@ class MainWindow:
             self._log_panel = LogPanel(
                 "main_window", services.logs, ui_cfg["stats_refresh_hz"], default_open=ui_cfg["log_panel_open"],
                 theme=app_cfg["theme"],
+                camera_names=lambda: {st.camera_id: st.display_name for st in services.statuses.statuses()},
             )
 
             with dpg.child_window(height=STATUS_HEIGHT, border=False, no_scrollbar=True):
@@ -113,7 +113,8 @@ class MainWindow:
     # --- per frame ------------------------------------------------------------
     def update(self) -> None:
         """Called once per rendered frame from the UI thread."""
-        self._toolbar.update()
+        # Polled every frame: also enforces the low-disk auto-stop of active recordings.
+        recording_status = self._services.recording.status()
         self._sidebar.update()
         self._multiview.update()
         self._status_panel.update()
@@ -143,7 +144,7 @@ class MainWindow:
         dpg.set_value(
             self._status,
             f"{len(camera_ids)} Cameras | {streaming} streaming | {total_fps:.1f} FPS"
-            f"{error_text} | Layout {self._multiview.layout} | {format_recording_status(self._toolbar.status)}",
+            f"{error_text} | Layout {self._multiview.layout} | {format_recording_status(recording_status)}",
         )
 
     def _fit_main_area(self) -> None:

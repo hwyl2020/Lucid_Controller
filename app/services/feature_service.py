@@ -12,6 +12,7 @@ import logging
 from app.cameras.camera_device import CameraNotConnectedError, UnsupportedFeatureError
 from app.cameras.camera_manager import CameraManager
 from app.models.features import Feature, FeatureCategory, Visibility
+from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +32,11 @@ class FeatureService:
 
     def write(self, camera_id: str, name: str, value: object) -> None:
         self._manager.camera(camera_id).write_feature(name, value)
-        logger.info("%s: %s = %r", camera_id, name, value)
+        logger.info("%s: %s = %r", camera_id, name, value, extra=for_camera(camera_id))
 
     def execute(self, camera_id: str, name: str) -> None:
         self._manager.camera(camera_id).execute_feature(name)
-        logger.info("%s: executed %s", camera_id, name)
+        logger.info("%s: executed %s", camera_id, name, extra=for_camera(camera_id))
 
 
 def matches(feature: Feature, query: str, max_visibility: Visibility = Visibility.GURU) -> bool:

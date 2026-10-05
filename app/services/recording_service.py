@@ -23,6 +23,7 @@ from app.models.camera_state import CameraState
 from app.recording.recorder import CameraRecorder, RawSequenceWriter, RecorderStats, RecordingMode
 from app.recording.snapshot import IMAGE_FORMATS, SnapshotFiles, save_snapshot
 from app.recording.video_writer import VideoFileWriter
+from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,7 @@ class RecordingService:
             # Attach queues last so recorders are ready before frames arrive.
             for camera_id, recorder in recorders.items():
                 self._manager.set_recording_queue(camera_id, recorder.queue)
-            logger.info("Recording (%s) %s to %s", mode.label, ", ".join(camera_ids), directory)
+            logger.info("Recording (%s) %s to %s", mode.label, ", ".join(camera_ids), directory, extra=for_camera(camera_ids[0] if len(camera_ids) == 1 else '-'))
             return directory
 
     def stop(self, camera_ids: list[str] | None = None) -> RecordingStatus:
@@ -209,9 +210,10 @@ class RecordingService:
                     self._sessions.remove(session)
                 last_dir, mode = session.directory, session.mode
                 totals = RecordingStatus(active=False, cameras={c: stopped[c] for c in to_stop})
-                logger.info(
+                logger.info(  # tagged with the camera when only one stopped
                     "Recording stopped for %s: %d frames, %.2f GB, %d dropped -> %s",
                     ", ".join(to_stop), totals.frames_written, totals.bytes_written / 1e9, totals.dropped, session.directory,
+                    extra=for_camera(to_stop[0] if len(to_stop) == 1 else "-"),
                 )
             return RecordingStatus(active=self.active, mode=mode, session_dir=last_dir, cameras=stopped,
                                    free_bytes=self._free_bytes, error=self._last_error)
@@ -315,7 +317,7 @@ class RecordingService:
             metadata = {"application": {"name": APP_NAME, "version": __version__},
                         "camera": camera_metadata(self._manager.camera(camera_id))}
             files = save_snapshot(frame, directory, metadata, image_format)
-            logger.info("Snapshot %s (%s) -> %s", camera_id, image_format.upper(), files.processed or files.raw)
+            logger.info("Snapshot %s (%s) -> %s", camera_id, image_format.upper(), files.processed or files.raw, extra=for_camera(camera_id))
             saved.append(files)
         if not saved:
             raise RecordingError("No frames available; start the camera first")

@@ -12,6 +12,7 @@ import threading
 from collections import deque
 
 from app.acquisition.frame import Frame
+from app.camera_log import for_camera
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,8 @@ class RecordingQueue:
                 count = self._overflow
             if count == 1 or count % 100 == 0:
                 logger.warning(
-                    "Recording queue full for %s: %d frame(s) not recorded", frame.camera_id, count
+                    "Recording queue full for %s: %d frame(s) not recorded", frame.camera_id, count,
+                    extra=for_camera(frame.camera_id),
                 )
             return False
 

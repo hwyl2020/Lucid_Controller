@@ -24,6 +24,7 @@ from app.cameras.camera_device import (
     UnsupportedFeatureError,
 )
 from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
+from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class SimulatorCamera(CameraDevice):
 
     def __init__(self, config: SimulatorConfig | None = None) -> None:
         self._config = config = config or SimulatorConfig()
+        self._log = camera_logger(logger, config.camera_id)
         if config.pattern not in PATTERNS:
             raise ValueError(f"Unknown pattern {config.pattern!r}; expected one of {PATTERNS}")
         if config.pixel_format not in PIXEL_FORMATS:
@@ -320,7 +322,7 @@ class SimulatorCamera(CameraDevice):
         with self._lock:
             self._require_connected()
             self._software_triggers += 1
-        logger.info("%s: TriggerSoftware executed (%d)", self.camera_id, self._software_triggers)
+        self._log.info("%s: TriggerSoftware executed (%d)", self.camera_id, self._software_triggers)
 
     def _set_user_id(self, value: object) -> None:
         text = str(value)
