@@ -491,6 +491,16 @@ def _stat_tile() -> None:
         dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 8, 2)
 
 
+def _splitter() -> None:
+    """Pane resize handle: invisible at rest, a soft accent bar on hover, full accent while dragging."""
+    with dpg.theme_component(dpg.mvButton):
+        dpg.add_theme_color(dpg.mvThemeCol_Button, (0, 0, 0, 0))
+        _col(dpg.mvThemeCol_ButtonHovered, "accent", 90)
+        _col(dpg.mvThemeCol_ButtonActive, "accent")
+        dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 3)
+        dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0)
+
+
 def _quiet_selectable() -> None:
     """Selectable without a selection fill (selection is shown by the surrounding card)."""
     with dpg.theme_component(dpg.mvSelectable):
@@ -608,6 +618,7 @@ _ROLE_BUILDERS: dict[str, Callable[[], None]] = {
     "pill_error": _pill("error", 40, "error"),
     "pill_rec": _pill("error", None, "on_accent"),
     "quiet_selectable": _quiet_selectable,
+    "splitter": _splitter,
     "callout_warning": _callout("warning"),
     "stat_tile": _stat_tile,
     "overlay": _overlay,

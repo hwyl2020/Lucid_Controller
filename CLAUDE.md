@@ -164,6 +164,7 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
   - collapsible **Logs** section (`log_panel.py`);
   - status bar.
 - **Fitting the stream area:** `MainWindow._fit_main_area()` measures the two sections each frame and sets the sidebar/multiview height to `-(sections + status bar)`. Collapsing a section gives the stream its space immediately.
+- **Resizable panes:** `widgets.Splitter` drag handles sit between the sidebar and the multiview, and above Camera Status and Logs. They are invisible at rest and show an accent bar on hover. The sizes are saved to `config.ui.sidebar_width` / `status_panel_height` (None = fit to the rows) / `log_panel_height` when a drag ends. View ▸ Reset layout restores the defaults. Floating windows (Settings, Performance, Property Grid, dialogs) are resizable too.
 - **Camera names:** shown everywhere as **`Model (Serial)`** via `camera_display_name()` / `CameraStatus.display_name`. The sidebar rows expand to show the IP address and state from `CameraStatusService`, never hard-coded.
 - **Per-camera status:** `CameraStatusService` builds `CameraStatus` (identity, IP, state, `bandwidth_mbps`, fps, `frame_count`, missed, timeouts). It is the single source for the sidebar, the status cards and the Performance window. Don't recompute these figures elsewhere.
 - **Units:** data rates are **Mb/s (megabits) everywhere**, via `models/units.py` (`bytes/s × 8 / 1e6`). Never display `MB/s`.
@@ -196,12 +197,12 @@ Platform-neutral, premium "camera workstation" look (Apple-level polish, not a m
 ### Per-camera rows and Property Grid
 
 - **Sidebar rows:** `CameraSidebar` holds one `CameraRow` (`app/ui/camera_row.py`) per camera.
-  - Each row is a card. Header line: disclosure arrow · state dot · `Model (Serial)` · `···` menu; second line: IP · state (Recording in red).
+  - Each row is a card. Header line: disclosure arrow · state dot · `Model (Serial)` (the `···` menu was removed on request); second line: IP · state (Recording in red).
   - The expandable panel holds that camera's **power switch** (`widgets.Switch`, an image button whose hidden label is "ON"/"OFF"; on/off = open/close the camera) with a separate **► Start / ■ Stop stream button** in the same row, video recording (format + record), image capture (format + capture), Mb/s / FPS / Frames metric blocks and the Property Grid button.
   - Power and streaming are deliberately separate. With the camera ON but not streaming, settings the camera locks during acquisition (pixel format, ROI, ...) can be changed in the Property Grid.
   - Every control acts on its own camera only and shows the real state from `CameraManager` every frame. Open/close/start/stop run on a worker thread, so one camera never blocks another.
   - Stopping the stream or turning the camera off finishes that camera's recording first. Record and Capture need a running stream.
-  - The `···` menu also has Save settings as profile / Apply profile.
+  - Profiles (Save settings as profile / Apply profile) are in the Property Grid's Profiles… button.
 - **Removed on request:** the old "Camera Settings" sidebar panel (exposure/gain/FPS/format/ROI) and Start all / Stop all (buttons and menu items). The Property Grid covers those settings. `CameraControlService` stays, because profiles and sessions use it.
 - **Per-camera recording:**
   - `RecordingService` runs several sessions at once. `start(mode, [id])` and `stop([id])` affect only those cameras, and a camera is in at most one active session.
@@ -228,6 +229,23 @@ Platform-neutral, premium "camera workstation" look (Apple-level polish, not a m
   - Search and a visibility level (Beginner/Expert/Guru).
   - The whole tree is re-read after every write, keeping expanded categories, because writes change other nodes' values and access.
 - **Hardware status:** the real-camera tree walk is not verified yet. The camera came back on 169.254.92.34 (link-local) while the PC is on 172.16.1.52/24, and connecting fails with `INVALID_ADDRESS`, which `_translate` now explains as a subnet mismatch.
+
+### Apply to all cameras / Reset to defaults (Property Grid)
+
+- **Apply to all cameras…** copies the camera's settings to every other camera that is ON, through
+  `FeatureService.copy_to_all`. Cameras that are off or recording are skipped. A streaming target is paused and
+  then resumed, and a failure on one camera never stops the others. `summarize_copy` builds the result dialog.
+  Other cameras' open Property Grids reload afterwards.
+- **Reset to defaults…** goes through `FeatureService.reset`, after a red confirmation.
+- **`CameraDevice` interface addition** (optional; the defaults raise `UnsupportedFeatureError`):
+  - `export_settings() -> str`, `import_settings(str)` and `reset_settings()`;
+  - `import_settings` and `reset_settings` raise `InvalidStateError` while acquiring.
+- **`ArenaCamera`:**
+  - Copying uses the SDK feature streams, as in LUCID's "Streamables" example: `nodemap.write_streamable_node_values_to(file)` and `read_streamable_node_values_from(file)`, via a temp file.
+  - `filter_streamable` drops `Gev*` and `DeviceUserID` lines, so IPs and camera names are never copied.
+  - Reset follows LUCID's "Reset Device Settings" example: `UserSetSelector = "Default"`, then `UserSetLoad.execute()`.
+  - Not yet verified on hardware: the camera was unplugged when this was built.
+- **Simulator:** `SimulatorCamera` uses JSON of its settings and clamps them to its own sensor.
 
 ### Force IP and stream-locked features
 

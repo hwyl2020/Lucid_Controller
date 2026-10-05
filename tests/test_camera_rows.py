@@ -12,12 +12,10 @@ import pytest
 from app.cameras.camera_manager import CameraManager
 from app.cameras.simulator_camera import SimulatorCamera, SimulatorConfig
 from app.models.camera_state import CameraState
-from app.services.camera_control_service import CameraControlService
 from app.services.camera_status_service import CameraStatusService
 from app.services.configuration import DEFAULT_CONFIG
 from app.services.feature_service import FeatureService
 from app.services.network_service import NetworkService
-from app.services.profile_service import ProfileService, SettingsApplier
 from app.services.recording_service import RecordingService
 from app.ui.camera_sidebar import CameraSidebar
 
@@ -42,13 +40,12 @@ def sidebar(tmp_path):
         manager.add_camera(SimulatorCamera(SimulatorConfig(camera_id=cid, serial_number=f"SN-{cid}", ip_address=ip,
                                                            width=320, height=240, fps=50)))
     recording = RecordingService(manager, cfg)
-    profiles = ProfileService(manager, SettingsApplier(manager, CameraControlService(manager)), tmp_path / "profiles")
     opened = []
     dpg.create_context()
     with dpg.window():
         with dpg.group() as parent:
             pass
-    bar = CameraSidebar(parent, manager, CameraStatusService(manager), recording, profiles, NetworkService(manager),
+    bar = CameraSidebar(parent, manager, CameraStatusService(manager), recording, NetworkService(manager),
                         on_property_grid=opened.append)
     yield bar, manager, recording, opened, tmp_path
     recording.stop()

@@ -3,6 +3,8 @@
 ``Switch``: a toggle switch (rounded track + knob, green when on) drawn into small anti-aliased
 textures and shown with an image button. The textures are shared by all switches and redrawn in
 the new colours whenever the theme or accent changes (``theme.on_apply``).
+
+``Splitter``: a drag handle between panes (sidebar | multiview, stream area / bottom sections).
 """
 
 from __future__ import annotations
@@ -79,6 +81,53 @@ def switch_texture(on: bool, enabled: bool = True) -> int | str:
             theme.on_apply(_paint)
             _listening = True
     return _textures[("on" if on else "off") + ("" if enabled else "_disabled")]
+
+
+class Splitter:
+    """Drag handle that resizes a pane: a thin column (``vertical``, changes a width) or a thin row
+    (changes a height). ``sign`` is +1 when dragging right/down grows the pane, -1 when dragging
+    left/up grows it. ``update()`` must run every frame; ``on_release`` gets the final size."""
+
+    def __init__(self, parent: int | str | None, vertical: bool, get_size: Callable[[], float],
+                 set_size: Callable[[float], None], minimum: float, maximum: Callable[[], float],
+                 sign: int = 1, thickness: int = 6, on_release: Callable[[float], None] | None = None,
+                 tooltip: str = "Drag to resize") -> None:
+        kw = {"parent": parent} if parent is not None else {}
+        self.vertical = vertical
+        self._get, self._set = get_size, set_size
+        self._min, self._max = minimum, maximum
+        self._sign = sign
+        self._on_release = on_release
+        self._drag: tuple[float, float] | None = None  # (mouse coordinate, size) when the drag began
+        self.button = dpg.add_button(label="", width=thickness if vertical else -1,
+                                     height=-1 if vertical else thickness, **kw)
+        theme.bind(self.button, "splitter")
+        with dpg.tooltip(self.button, delay=0.6):
+            dpg.add_text(tooltip)
+
+    def clamp(self, size: float) -> int:
+        return int(round(min(max(size, self._min), max(self._min, self._max()))))
+
+    def update(self) -> None:
+        if not dpg.is_item_active(self.button):
+            if self._drag is not None:
+                self._drag = None
+                if self._on_release is not None:
+                    self._on_release(self._get())
+            return
+        x, y = dpg.get_mouse_pos(local=False)
+        mouse = x if self.vertical else y
+        if self._drag is None:
+            self._drag = (mouse, self._get())
+            return
+        start_mouse, start_size = self._drag
+        size = self.clamp(start_size + self._sign * (mouse - start_mouse))
+        if size != self._get():
+            self._set(size)
+
+    @property
+    def dragging(self) -> bool:
+        return self._drag is not None
 
 
 class Switch:

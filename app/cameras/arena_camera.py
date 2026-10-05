@@ -15,6 +15,8 @@ Node names are GenICam SFNC / LUCID stream features; optional ones are set best-
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import threading
 import time
 
@@ -56,6 +58,23 @@ STREAM_SETTINGS: dict[str, object] = {
     "StreamAutoNegotiatePacketSize": True,
     "StreamPacketResendEnable": True,
 }
+
+# Never copied between cameras: network identity (copying a persistent IP to every camera would
+# give them all the same address) and the user-defined camera name.
+NOT_COPIED_PREFIXES = ("Gev", "DeviceUserID")
+
+
+def filter_streamable(text: str) -> str:
+    """Drop per-camera identity features from a feature-stream file (``Name<TAB>Value`` lines;
+    ``#`` lines are comments)."""
+    kept = []
+    for line in text.splitlines():
+        name = line.split(None, 1)[0] if line.strip() else ""
+        if name and not name.startswith("#") and name.startswith(NOT_COPIED_PREFIXES):
+            continue
+        kept.append(line)
+    return "\n".join(kept) + ("\n" if text.endswith("\n") else "")
+
 
 # Formats copied as-is: name -> (numpy dtype, channels, bits per pixel in the buffer).
 # Bayer stays raw: copying a 12 MP BayerRG8 frame takes ~4 ms, whereas SDK conversion to RGB8 plus
@@ -360,6 +379,63 @@ class ArenaCamera(CameraDevice):
                 node.execute()
             except Exception as exc:  # noqa: BLE001
                 raise self._translate(exc, f"execute {name}") from exc
+
+    # --- settings transfer / reset -------------------------------------------
+    # Copying uses the SDK's feature streams (LUCID "Streamables" example): the SDK writes every
+    # streamable feature in dependency order, including selector-indexed values.
+    def export_settings(self) -> str:
+        with self._lock:
+            device = self._require_device()
+            text = self._with_temp_file(lambda path: device.nodemap.write_streamable_node_values_to(path),
+                                        "save settings", read_back=True)
+        return filter_streamable(text)
+
+    def import_settings(self, settings: str) -> None:
+        with self._lock:
+            device = self._require_device()
+            if self._acquiring:
+                raise InvalidStateError(f"{self.camera_id}: stop acquisition before loading settings")
+            self._with_temp_file(lambda path: device.nodemap.read_streamable_node_values_from(path),
+                                 "load settings", content=filter_streamable(settings))
+            self._log.info("%s: settings loaded", self.camera_id)
+
+    def reset_settings(self) -> None:
+        """Load the factory ``Default`` user set (LUCID "Reset Device Settings" example)."""
+        with self._lock:
+            device = self._require_device()
+            if self._acquiring:
+                raise InvalidStateError(f"{self.camera_id}: stop acquisition before resetting settings")
+            selector = self._node(device.nodemap, "UserSetSelector")
+            load = self._node(device.nodemap, "UserSetLoad")
+            if selector is None or load is None:
+                raise UnsupportedFeatureError(f"{self.camera_id}: the camera has no user sets to reset from")
+            try:
+                selector.value = "Default"
+                load.execute()
+            except Exception as exc:  # noqa: BLE001
+                raise self._translate(exc, "reset to default settings") from exc
+            self._log.info("%s: settings reset to the Default user set", self.camera_id)
+
+    def _with_temp_file(self, action, what: str, content: str | None = None, read_back: bool = False) -> str:
+        handle, path = tempfile.mkstemp(prefix=f"lucid_{self.camera_id}_", suffix=".txt")
+        os.close(handle)
+        try:
+            if content is not None:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            try:
+                action(path)
+            except Exception as exc:  # noqa: BLE001
+                raise self._translate(exc, what) from exc
+            if read_back:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    return f.read()
+            return ""
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     def _category(self, node, depth: int) -> FeatureCategory:
         features: list[Feature] = []

@@ -31,7 +31,7 @@ class SettingsWindow:
         self._services = services
         self._on_theme = on_theme
         self._on_accent = on_accent
-        with dpg.window(label="Settings", width=580, autosize=True, show=False, pos=(300, 70), no_collapse=True) as self.window:
+        with dpg.window(label="Settings", width=580, height=660, show=False, pos=(300, 70), no_collapse=True) as self.window:
             with self._section("Appearance"):
                 self._theme = self._row("Theme", lambda: dpg.add_combo(["dark", "light"], width=FIELD_WIDTH))
                 self._accent = self._row("Accent colour", lambda: dpg.add_combo(list(ACCENTS), width=FIELD_WIDTH))

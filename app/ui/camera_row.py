@@ -1,6 +1,6 @@
 """One camera in the sidebar list: a card with a header line plus its own expandable control panel.
 
-Header:  [disclosure] [state dot] Model (Serial)  IP  [···]
+Header:  [disclosure] [state dot] Model (Serial), then IP · state
 Panel (this camera only): power switch + stream button, video recording (format + record),
 image capture (format + capture), live statistics and the Property Grid button.
 
@@ -29,7 +29,6 @@ from app.recording.recorder import RecordingMode
 from app.recording.snapshot import IMAGE_FORMATS
 from app.services.camera_status_service import CameraStatusService
 from app.services.network_service import NetworkService
-from app.services.profile_service import ProfileService
 from app.services.recording_service import RecordingError, RecordingService
 from app.ui import dialogs
 from app.ui import theme
@@ -40,7 +39,6 @@ from app.camera_log import camera_logger
 logger = logging.getLogger(__name__)
 
 SUBTITLE_INDENT = 34  # aligns the IP / state line under the camera name
-MENU_WIDTH = 28
 CONTROL_WIDTH = 150
 STREAM_WIDTH = 104
 PLAY, STOP = "►", "■"  # Segoe UI has U+25BA/U+25A0 (not U+25B6)
@@ -67,7 +65,6 @@ class CameraRow:
         manager: CameraManager,
         statuses: CameraStatusService,
         recording: RecordingService,
-        profiles: ProfileService,
         network: NetworkService,
         on_select: Callable[[str], None],
         on_property_grid: Callable[[str], None],
@@ -77,7 +74,6 @@ class CameraRow:
         self._manager = manager
         self._statuses = statuses
         self._recording = recording
-        self._profiles = profiles
         self._network = network
         self._notice: tuple[str, bool] | None = None  # (text, is_error) from the last power action
         self._choose_adapter = None  # (check, candidates) waiting for the adapter dialog
@@ -91,44 +87,26 @@ class CameraRow:
         self._dot_key: tuple | None = None
 
         with dpg.child_window(parent=parent, auto_resize_y=True, no_scrollbar=True) as self.card:
-            with _borderless_table(policy=dpg.mvTable_SizingFixedFit) as header:
-                dpg.add_table_column(width_stretch=True)
-                dpg.add_table_column(width_fixed=True, init_width_or_weight=MENU_WIDTH)
-                with dpg.table_row():
-                    with dpg.group(horizontal=True, horizontal_spacing=6) as self.header:
-                        self.arrow = dpg.add_button(arrow=True, direction=dpg.mvDir_Right,
-                                                    callback=self.toggle_expanded)
-                        self.dot = dpg.add_text("●")
-                        self.name = dpg.add_selectable(label=status.display_name, width=0,
-                                                       callback=lambda: self._on_select(self.camera_id))
-                    self.menu_button = dpg.add_button(label="···", width=MENU_WIDTH)  # no U+22EE
-                with dpg.table_row():
-                    with dpg.group(horizontal=True, horizontal_spacing=6):
-                        dpg.add_spacer(width=SUBTITLE_INDENT)
-                        self.ip = secondary_text(status.ip_address or "No IP")
-                        sep = secondary_text("·")
-                        self.state_text = secondary_text("")
-                    dpg.add_spacer(width=1)
-            bind(header, "tight")
+            with dpg.group() as title_stack:  # no gap between the name line and the IP line
+                with dpg.group(horizontal=True, horizontal_spacing=6) as self.header:
+                    self.arrow = dpg.add_button(arrow=True, direction=dpg.mvDir_Right, callback=self.toggle_expanded)
+                    self.dot = dpg.add_text("●")
+                    self.name = dpg.add_selectable(label=status.display_name, width=0,
+                                                   callback=lambda: self._on_select(self.camera_id))
+                with dpg.group(horizontal=True, horizontal_spacing=6):
+                    dpg.add_spacer(width=SUBTITLE_INDENT)
+                    self.ip = secondary_text(status.ip_address or "No IP")
+                    sep = secondary_text("·")
+                    self.state_text = secondary_text("")
+            bind(title_stack, "stack")
             use_font(self.name, "heading")
             for item in (self.ip, sep, self.state_text):
                 use_font(item, "small")
             use_font(self.dot, "caption")
             bind(self.arrow, "ghost")
-            bind(self.menu_button, "ghost")
             bind(self.name, "quiet_selectable")
             with dpg.tooltip(self.name):
                 dpg.add_text(f"{status.display_name}\nCamera ID: {self.camera_id}")
-            with dpg.popup(self.menu_button, mousebutton=dpg.mvMouseButton_Left):
-                dpg.add_menu_item(label="Property Grid…", callback=lambda: self._on_property_grid(self.camera_id))
-                dpg.add_menu_item(label="Turn camera on / off", callback=self.toggle_power)
-                dpg.add_menu_item(label="Start / stop streaming", callback=self.toggle_stream)
-                dpg.add_menu_item(label="Capture image", callback=self.capture)
-                dpg.add_separator()
-                dpg.add_menu_item(label="Save settings as profile…", callback=self._save_profile)
-                dpg.add_menu_item(label="Apply profile…", callback=self._apply_profile)
-                dpg.add_separator()
-                dpg.add_menu_item(label="Show controls", callback=lambda: self.set_expanded(True))
 
             with dpg.group(show=False) as self.panel:
                 dpg.add_separator()
@@ -394,31 +372,6 @@ class CameraRow:
                   if acquiring else (DASH, DASH, DASH))
         for item, value in zip(self._metrics, values):
             dpg.set_value(item, value)
-
-    # --- profiles (menu) ---------------------------------------------------------------
-    def _save_profile(self) -> None:
-        def save(name: str) -> None:
-            try:
-                path = self._profiles.save(self.camera_id, name)
-            except (CameraError, OSError, ValueError) as exc:
-                dialogs.message("Save profile", str(exc))
-                return
-            dialogs.message("Save profile", f"Profile “{name.strip()}” saved to {path}")
-        dialogs.prompt_text("Save profile", "Profile name", save)
-
-    def _apply_profile(self) -> None:
-        def apply(name: str) -> None:
-            try:
-                warnings = self._profiles.apply(self.camera_id, name)
-            except CameraError as exc:
-                dialogs.message("Apply profile", str(exc))
-                return
-            text = f"Profile “{name}” applied."
-            if warnings:
-                text += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
-            dialogs.message("Apply profile", text)
-        dialogs.choose("Apply profile", "Profile", self._profiles.list_profiles(), apply,
-                       empty_text="No saved profiles yet. Use “Save settings as profile” first.")
 
     @staticmethod
     def _set_text(item, text: str, error: bool = False) -> None:

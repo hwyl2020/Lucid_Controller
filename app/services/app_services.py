@@ -52,7 +52,7 @@ class AppServices:
             manager=manager,
             controls=controls,
             statuses=statuses,
-            features=FeatureService(manager),
+            features=FeatureService(manager, recording.is_recording),
             network=NetworkService(manager),
             logs=logs if logs is not None else LogBuffer(),
             recording=recording,

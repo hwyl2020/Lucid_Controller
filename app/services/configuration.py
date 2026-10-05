@@ -20,6 +20,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "stats_refresh_hz": 5,  # camera status / log panel refresh rate (not tied to camera FPS)
         "status_panel_open": True,
         "log_panel_open": False,
+        # Pane sizes, changed by dragging the resize handles (View > Reset layout restores them).
+        "sidebar_width": 392,
+        "status_panel_height": None,  # None = fit to the number of cameras
+        "log_panel_height": 180,
     },
     "recording": {
         "directory": "recordings",

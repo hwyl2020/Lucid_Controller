@@ -4,7 +4,8 @@ Each row shows the camera the record concerns (``Model (Serial)``; "System" for 
 records), from the ``camera_id`` tag set by ``app.camera_log``. Controls: level filter
 (All | Debug | Info | Warning | Error), camera filter, auto-scroll, clear. New entries are
 pulled from the buffer at ``refresh_hz``; logging threads never wait on the UI. The table uses a
-clipper so only visible rows are drawn, and keeps at most ``MAX_ROWS`` rows.
+clipper so only visible rows are drawn, and keeps at most ``MAX_ROWS`` rows. The section height is
+changed by dragging the handle above it.
 """
 
 from __future__ import annotations
@@ -18,9 +19,11 @@ import dearpygui.dearpygui as dpg
 from app.services.log_buffer import LogBuffer, LogEntry
 from app.ui import theme as ui_theme
 from app.ui.theme import COLORS, THEME_TEXT, SegmentedControl, bind, secondary_text, use_font
+from app.ui.widgets import Splitter
 
 MAX_ROWS = 1000
 PANEL_HEIGHT = 180
+MIN_BODY_HEIGHT = 60
 FILTERS = ("All", "Debug", "Info", "Warning", "Error")
 ALL_CAMERAS = "All cameras"
 SYSTEM = "System (no camera)"
@@ -66,7 +69,11 @@ class LogPanel:
         default_open: bool = False,
         theme: str = "dark",
         camera_names: Callable[[], dict[str, str]] = dict,
+        height: int | None = None,
+        max_height: Callable[[], float] = lambda: 600,
+        on_resized: Callable[[int], None] | None = None,
     ) -> None:
+        self._on_resized = on_resized
         self._buffer = buffer
         self._camera_names = camera_names  # camera_id -> "Model (Serial)"
         self._names: dict[str, str] = {}
@@ -80,6 +87,10 @@ class LogPanel:
         self._revision = ui_theme.revision()
 
         with dpg.group(parent=parent) as self.group:
+            self.splitter = Splitter(None, vertical=False, get_size=self.body_height, set_size=self.set_body_height,
+                                     minimum=MIN_BODY_HEIGHT, maximum=max_height, sign=-1,
+                                     on_release=lambda h: on_resized(int(h)) if on_resized else None,
+                                     tooltip="Drag to resize Logs")
             self.header = dpg.add_collapsing_header(label="Logs", default_open=default_open)
             use_font(self.header, "heading")
             with dpg.group(horizontal=True, parent=self.header):
@@ -94,7 +105,7 @@ class LogPanel:
                 dpg.add_spacer(width=4)
                 self._count = secondary_text("")
             self._hint = dpg.add_text("", color=COLORS["warning"], parent=self.header, show=False)
-            with dpg.child_window(parent=self.header, height=PANEL_HEIGHT, border=True) as self._body:
+            with dpg.child_window(parent=self.header, height=int(height or PANEL_HEIGHT), border=True) as self._body:
                 with dpg.table(header_row=False, clipper=True, row_background=True,
                                borders_innerH=False, borders_outerH=False, borders_innerV=False,
                                borders_outerV=False, policy=dpg.mvTable_SizingFixedFit) as self._table:
@@ -113,6 +124,12 @@ class LogPanel:
 
     def set_open(self, open_: bool) -> None:
         dpg.set_value(self.header, open_)
+
+    def body_height(self) -> int:
+        return int(dpg.get_item_height(self._body))
+
+    def set_body_height(self, height: float) -> None:
+        dpg.configure_item(self._body, height=int(height))
 
     @property
     def level_filter(self) -> str:
@@ -166,6 +183,10 @@ class LogPanel:
 
     def update(self) -> None:
         is_open = self.is_open
+        if dpg.is_item_shown(self.splitter.button) != is_open:
+            dpg.configure_item(self.splitter.button, show=is_open)
+        if is_open:
+            self.splitter.update()
         if is_open and not self._was_open:
             self._dirty = True  # rows were not maintained while collapsed
         self._was_open = is_open

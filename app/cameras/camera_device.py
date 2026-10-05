@@ -248,6 +248,22 @@ class CameraDevice(ABC):
         """Execute a command feature by name."""
         raise UnsupportedFeatureError(f"{self.camera_id}: feature access not supported")
 
+    # --- settings transfer / reset ----------------------------------------------
+    # Optional. Settings travel as opaque backend text (a feature-stream file on Arena cameras),
+    # so "apply to all cameras" copies everything the camera itself considers a setting.
+    def export_settings(self) -> str:
+        """The camera's current settings (identity/network settings excluded)."""
+        raise UnsupportedFeatureError(f"{self.camera_id}: copying settings not supported")
+
+    def import_settings(self, settings: str) -> None:
+        """Apply settings from ``export_settings`` (of this or a compatible camera).
+        Raises InvalidStateError while acquiring."""
+        raise UnsupportedFeatureError(f"{self.camera_id}: copying settings not supported")
+
+    def reset_settings(self) -> None:
+        """Restore the camera's default (factory) settings. Raises InvalidStateError while acquiring."""
+        raise UnsupportedFeatureError(f"{self.camera_id}: resetting settings not supported")
+
     # --- network (GigE) ------------------------------------------------------
     # Optional: only network cameras implement these.
     def network_check(self) -> NetworkCheck | None:

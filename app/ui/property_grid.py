@@ -4,6 +4,10 @@ One window per camera (several may be open at once). The feature tree is read th
 FeatureService on a background thread (a real camera means hundreds of network reads) and re-read
 after every change and whenever the camera's state changes (on/off, streaming started/stopped),
 because the camera locks some features while streaming; this keeps access modes truthful.
+
+Actions bar: "Apply to all cameras" copies this camera's settings to every other camera that is on,
+"Reset to defaults" restores the camera's factory default settings, and Profiles saves/applies
+named profiles. Camera work runs on a background thread; its outcome is shown on the UI thread.
 """
 
 from __future__ import annotations
@@ -17,7 +21,9 @@ import dearpygui.dearpygui as dpg
 from app.cameras.camera_device import CameraError
 from app.models.camera_state import CameraState
 from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
-from app.services.feature_service import FeatureService, matches
+from app.services.feature_service import FeatureService, matches, summarize_copy
+from app.services.profile_service import ProfileService
+from app.ui import dialogs
 from app.ui.theme import COLORS, THEME_TEXT, bind, nudge, secondary_text, use_font
 from app.camera_log import camera_logger
 
@@ -54,8 +60,16 @@ def feature_tooltip(feature: Feature) -> str:
 
 class PropertyGridWindow:
     def __init__(self, camera_id: str, title: str, features: FeatureService, on_close: Callable[[str], None],
-                 state_of: Callable[[str], CameraState], pos: tuple[int, int] = (220, 90)) -> None:
+                 state_of: Callable[[str], CameraState], pos: tuple[int, int] = (220, 90),
+                 profiles: ProfileService | None = None, camera_names: Callable[[], dict[str, str]] = dict,
+                 on_settings_changed: Callable[[list[str]], None] | None = None) -> None:
         self.camera_id = camera_id
+        self._title = title
+        self._profiles = profiles
+        self._camera_names = camera_names  # camera_id -> "Model (Serial)"
+        self._on_settings_changed = on_settings_changed
+        self._job: str | None = None  # label of the running background action
+        self._job_done: Callable[[], None] | None = None  # UI-thread follow-up of a finished action
         self._features = features
         self._log = camera_logger(logger, camera_id)
         self._state_of = state_of
@@ -82,6 +96,19 @@ class PropertyGridWindow:
                 self._visibility = dpg.add_combo(list(VISIBILITY_LABELS), default_value="Expert", width=110,
                                                  callback=lambda: self._apply_filter())
                 dpg.add_button(label="Refresh", width=84, callback=lambda: self.reload())
+            with dpg.group(horizontal=True):
+                self._apply_all_button = dpg.add_button(label="Apply to all cameras…", callback=self._confirm_apply_all)
+                self._reset_button = dpg.add_button(label="Reset to defaults…", callback=self._confirm_reset)
+                self._profiles_button = dpg.add_button(label="Profiles…", show=profiles is not None)
+            bind(self._apply_all_button, "primary")
+            with dpg.tooltip(self._apply_all_button):
+                dpg.add_text("Copy this camera's current settings to every other camera that is on.\n"
+                             "Network settings (IP) and the camera's user name are not copied.")
+            with dpg.tooltip(self._reset_button):
+                dpg.add_text("Restore this camera's factory default settings (its 'Default' user set).")
+            with dpg.popup(self._profiles_button, mousebutton=dpg.mvMouseButton_Left):
+                dpg.add_menu_item(label="Save settings as profile…", callback=self._save_profile)
+                dpg.add_menu_item(label="Apply profile…", callback=self._apply_profile)
             bind(self._search, "search")
             use_font(show, "small")
             self._message = secondary_text("Loading features…", wrap=650)
@@ -139,6 +166,13 @@ class PropertyGridWindow:
 
     def update(self) -> None:
         """Called each UI frame: reloads on camera state changes; applies finished loads."""
+        done, self._job_done = self._job_done, None
+        if done is not None:
+            self._job = None
+            done()
+        busy = self._job is not None
+        for button in (self._apply_all_button, self._reset_button):
+            dpg.configure_item(button, enabled=not busy)
         state = self._state_of(self.camera_id)
         if state is not self._last_state:
             self._last_state = state
@@ -283,6 +317,103 @@ class PropertyGridWindow:
         else:
             self._show(f"{name} executed", error=False)
         self.reload()
+
+    # --- apply to all / reset / profiles ---------------------------------------------
+    def _confirm_apply_all(self) -> None:
+        others = [name for cid, name in self._camera_names().items() if cid != self.camera_id]
+        if not others:
+            dialogs.message("Apply to all cameras", "There are no other cameras to apply the settings to.")
+            return
+        dialogs.confirm(
+            "Apply to all cameras",
+            f"Copy the current settings of {self._title} to {len(others)} other camera(s)?\n\n"
+            "Cameras that are off or recording are skipped. A streaming camera pauses briefly while its "
+            "settings change. Network settings (IP) and camera names are not copied.",
+            "Apply to all", self.apply_to_all)
+
+    def apply_to_all(self) -> None:
+        def work():
+            try:
+                results = self._features.copy_to_all(self.camera_id)
+            except CameraError as exc:
+                message = str(exc)
+                return lambda: (self._show(message, error=True), dialogs.message("Apply to all cameras", message))
+            text, failed = summarize_copy(results, self._camera_names())
+            changed = [r.camera_id for r in results if r.applied]
+
+            def finish():
+                if self._on_settings_changed is not None and changed:
+                    self._on_settings_changed(changed)
+                self._show(text.splitlines()[0], error=failed)
+                dialogs.message("Apply to all cameras", text)
+            return finish
+        self._start_job("Applying settings to all cameras…", work)
+
+    def _confirm_reset(self) -> None:
+        dialogs.confirm(
+            "Reset to defaults",
+            f"Restore the factory default settings of {self._title}?\n\n"
+            "Every change made to this camera's settings is lost. A streaming camera pauses briefly.",
+            "Reset", self.reset_to_defaults, danger=True)
+
+    def reset_to_defaults(self) -> None:
+        def work():
+            try:
+                self._features.reset(self.camera_id)
+            except CameraError as exc:
+                message = str(exc)
+                return lambda: self._show(message, error=True)
+            return lambda: self._show("Settings reset to the camera's defaults", error=False)
+        self._start_job("Resetting to default settings…", work)
+
+    @property
+    def busy(self) -> bool:
+        return self._job is not None
+
+    def _start_job(self, label: str, work: Callable[[], Callable[[], None]]) -> None:
+        if self._job is not None:
+            return
+        self._job = label
+        self._show(label, error=False, dim=True)
+
+        def run():
+            try:
+                done = work()
+            except Exception as exc:  # noqa: BLE001 - shown in the window, never crashes the app
+                self._log.exception("%s failed", label)
+                message = f"{label.rstrip('…')} failed: {exc}"
+                done = (lambda: self._show(message, error=True))
+
+            def finish():
+                done()
+                self.reload()
+            self._job_done = finish
+        threading.Thread(target=run, name=f"settings-{self.camera_id}", daemon=True).start()
+
+    def _save_profile(self) -> None:
+        def save(name: str) -> None:
+            try:
+                path = self._profiles.save(self.camera_id, name)
+            except (CameraError, OSError, ValueError) as exc:
+                dialogs.message("Save profile", str(exc))
+                return
+            dialogs.message("Save profile", f"Profile “{name.strip()}” saved to {path}")
+        dialogs.prompt_text("Save profile", "Profile name", save)
+
+    def _apply_profile(self) -> None:
+        def apply(name: str) -> None:
+            try:
+                warnings = self._profiles.apply(self.camera_id, name)
+            except CameraError as exc:
+                dialogs.message("Apply profile", str(exc))
+                return
+            text = f"Profile “{name}” applied."
+            if warnings:
+                text += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
+            dialogs.message("Apply profile", text)
+            self.reload()
+        dialogs.choose("Apply profile", "Profile", self._profiles.list_profiles(), apply,
+                       empty_text="No saved profiles yet. Use “Save settings as profile” first.")
 
     def _show(self, text: str, error: bool, dim: bool = False) -> None:
         self._keep_message = not dim

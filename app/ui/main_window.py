@@ -1,5 +1,8 @@
 """Main window: menu bar, header, camera sidebar, multiview, status/log sections, status bar.
 
+The sidebar width and the section heights are resizable with drag handles (``widgets.Splitter``);
+sizes are saved to config.json (``ui.*``) when a drag ends.
+
 Recording and snapshots are per camera (camera rows); the header has no global record controls."""
 
 from __future__ import annotations
@@ -26,11 +29,16 @@ from app.ui.status_panel import StatusPanel
 from app.ui import theme
 from app.ui.theme import ACCENTS, COLORS, THEME_TEXT, bind, load_fonts, secondary_text, use_font
 from app.ui.status_bar import format_recording_status
+from app.ui.widgets import Splitter
 
 logger = logging.getLogger(__name__)
 
 APP_TITLE = "LUCID Camera Studio"
-SIDEBAR_WIDTH = 392  # fits Model (Serial) + IP on one line
+SIDEBAR_WIDTH = 392  # default; fits Model (Serial) + IP on one line
+MIN_SIDEBAR_WIDTH = 300
+MIN_STREAM_WIDTH = 320
+MIN_STREAM_HEIGHT = 180
+SPLITTER = 6  # resize handle thickness
 HEADER_HEIGHT = 46
 STATUS_HEIGHT = 30
 SPACING = 8  # matches mvStyleVar_ItemSpacing y in theme.py
@@ -47,6 +55,7 @@ class MainWindow:
         self._ui_window_start = time.perf_counter()
         self._bottom_height = 0
         ui_cfg = services.config["ui"]
+        self._sidebar_width = int(ui_cfg.get("sidebar_width") or SIDEBAR_WIDTH)
         load_fonts()  # before building widgets so use_font() can apply heading/mono faces
 
         with dpg.window(tag="main_window", menubar=True):
@@ -61,6 +70,7 @@ class MainWindow:
                     dpg.add_menu_item(label="Exit", callback=lambda: dpg.stop_dearpygui())
                 with dpg.menu(label="View"):
                     dpg.add_menu_item(label="Performance", callback=lambda: self._performance.toggle())
+                    dpg.add_menu_item(label="Reset layout", callback=self.reset_layout)
                     dpg.add_separator()
                     with dpg.menu(label="Theme"):
                         self._theme_items = {
@@ -110,13 +120,20 @@ class MainWindow:
                 use_font(pill, "caption")
             self._pill_roles: dict[int | str, str] = {}
 
-            with dpg.group(horizontal=True, horizontal_spacing=12):
-                with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8, border=True) as sidebar:
+            with dpg.group(horizontal=True, horizontal_spacing=(12 - SPLITTER) // 2):
+                with dpg.child_window(width=self._sidebar_width, height=-STATUS_HEIGHT - 8, border=True) as sidebar:
                     self._sidebar_window = sidebar
                     self._sidebar = CameraSidebar(
-                        sidebar, self._manager, services.statuses, services.recording, services.profiles,
-                        services.network, self.open_property_grid,
+                        sidebar, self._manager, services.statuses, services.recording, services.network,
+                        self.open_property_grid,
                     )
+                self._sidebar_splitter = Splitter(
+                    None, vertical=True, get_size=lambda: self._sidebar_width, set_size=self.set_sidebar_width,
+                    minimum=MIN_SIDEBAR_WIDTH,
+                    maximum=lambda: dpg.get_viewport_client_width() - MIN_STREAM_WIDTH - 2 * SPACING,
+                    thickness=SPLITTER, on_release=lambda w: self._save_ui("sidebar_width", int(w)),
+                    tooltip="Drag to resize the camera list",
+                )
                 with dpg.child_window(width=-1, height=-STATUS_HEIGHT - 8, no_scrollbar=True) as area:
                     self._area_window = area
                     self._multiview = MultiView(
@@ -128,12 +145,18 @@ class MainWindow:
 
             # Collapsible sections below the multiview; the stream area takes whatever they free up.
             self._status_panel = StatusPanel(
-                "main_window", services.statuses, ui_cfg["stats_refresh_hz"], default_open=ui_cfg["status_panel_open"]
+                "main_window", services.statuses, ui_cfg["stats_refresh_hz"], default_open=ui_cfg["status_panel_open"],
+                height=ui_cfg.get("status_panel_height"),
+                max_height=lambda: self._max_section_height(self._log_panel.group),
+                on_resized=lambda h: self._save_ui("status_panel_height", h),
             )
             self._log_panel = LogPanel(
                 "main_window", services.logs, ui_cfg["stats_refresh_hz"], default_open=ui_cfg["log_panel_open"],
                 theme=app_cfg["theme"],
                 camera_names=lambda: {st.camera_id: st.display_name for st in services.statuses.statuses()},
+                height=ui_cfg.get("log_panel_height"),
+                max_height=lambda: self._max_section_height(self._status_panel.group),
+                on_resized=lambda h: self._save_ui("log_panel_height", h),
             )
 
             with dpg.child_window(height=STATUS_HEIGHT, border=True, no_scrollbar=True,
@@ -164,6 +187,7 @@ class MainWindow:
         """Called once per rendered frame from the UI thread."""
         # Polled every frame: also enforces the low-disk auto-stop of active recordings.
         recording_status = self._services.recording.status()
+        self._sidebar_splitter.update()
         self._sidebar.update()
         self._multiview.update()
         self._status_panel.update()
@@ -214,8 +238,32 @@ class MainWindow:
         bottom = int(sections + STATUS_HEIGHT + 3 * SPACING)
         if bottom != self._bottom_height:
             self._bottom_height = bottom
-            for window in (self._sidebar_window, self._area_window):
+            for window in (self._sidebar_window, self._sidebar_splitter.button, self._area_window):
                 dpg.configure_item(window, height=-bottom)
+
+    # --- resizing -------------------------------------------------------------
+    def set_sidebar_width(self, width: float) -> None:
+        self._sidebar_width = int(width)
+        dpg.configure_item(self._sidebar_window, width=self._sidebar_width)
+
+    def _max_section_height(self, other_section: int | str) -> float:
+        """A section may grow until the stream area is down to MIN_STREAM_HEIGHT."""
+        other = dpg.get_item_rect_size(other_section)[1]
+        chrome = HEADER_HEIGHT + STATUS_HEIGHT + 40 + 8 * SPACING  # menu bar, section headers, spacing
+        return dpg.get_viewport_client_height() - other - chrome - MIN_STREAM_HEIGHT
+
+    def reset_layout(self) -> None:
+        """View > Reset layout: default sidebar width and section heights."""
+        self.set_sidebar_width(SIDEBAR_WIDTH)
+        self._log_panel.set_body_height(180)
+        self._status_panel.fit_to_rows()
+        ui = self._services.config["ui"]
+        ui.update(sidebar_width=SIDEBAR_WIDTH, status_panel_height=None, log_panel_height=180)
+        self._persist_config()
+
+    def _save_ui(self, key: str, value) -> None:
+        self._services.config["ui"][key] = value
+        self._persist_config()
 
     def _update_ui_fps(self) -> None:
         self._ui_frames += 1
@@ -305,8 +353,18 @@ class MainWindow:
             self._services.features,
             on_close=lambda cid: self._property_grids.pop(cid, None),
             state_of=self._manager.state,
-            pos=(SIDEBAR_WIDTH + 48 + offset, 100 + offset),
+            pos=(self._sidebar_width + 48 + offset, 100 + offset),
+            profiles=self._services.profiles,
+            camera_names=lambda: {st.camera_id: st.display_name for st in self._services.statuses.statuses()},
+            on_settings_changed=self._settings_changed,
         )
+
+    def _settings_changed(self, camera_ids: list[str]) -> None:
+        """Another camera's settings were changed (e.g. Apply to all): refresh its open Property Grid."""
+        for camera_id in camera_ids:
+            grid = self._property_grids.get(camera_id)
+            if grid is not None:
+                grid.reload()
 
     def _export_diagnostics(self) -> None:
         services = self._services

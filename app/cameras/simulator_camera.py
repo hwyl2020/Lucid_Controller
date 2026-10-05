@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -323,6 +324,44 @@ class SimulatorCamera(CameraDevice):
             self._require_connected()
             self._software_triggers += 1
         self._log.info("%s: TriggerSoftware executed (%d)", self.camera_id, self._software_triggers)
+
+    # --- settings transfer / reset ----------------------------------------------
+    def export_settings(self) -> str:
+        with self._lock:
+            self._require_connected()
+            roi = self._roi
+            return json.dumps({"PixelFormat": self._pixel_format, "Width": roi.width, "Height": roi.height,
+                               "OffsetX": roi.x, "OffsetY": roi.y, "ExposureTime": self._exposure,
+                               "Gain": self._gain, "AcquisitionFrameRate": self._fps})
+
+    def import_settings(self, settings: str) -> None:
+        try:
+            values = json.loads(settings)
+            roi = Roi(int(values["OffsetX"]), int(values["OffsetY"]), int(values["Width"]), int(values["Height"]))
+            fmt, exposure = str(values["PixelFormat"]), float(values["ExposureTime"])
+            gain, fps = float(values["Gain"]), float(values["AcquisitionFrameRate"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise InvalidValueError(f"{self.camera_id}: not simulator settings") from exc
+        with self._lock:
+            self._require_connected()
+            self._require_not_acquiring("settings")
+        # Clamp to this camera: another simulator may have a different sensor size.
+        roi = self._roi_limits.clamp(roi)
+        self.set_pixel_format(fmt)
+        self.set_roi(roi.x, roi.y, roi.width, roi.height)
+        self.set_exposure(self.EXPOSURE_RANGE.clamp(exposure))
+        self.set_gain(self.GAIN_RANGE.clamp(gain))
+        self.set_frame_rate(self.FRAME_RATE_RANGE.clamp(fps))
+
+    def reset_settings(self) -> None:
+        with self._lock:
+            self._require_connected()
+            self._require_not_acquiring("settings")
+            self._exposure = self.REFERENCE_EXPOSURE_US
+            self._gain = 0.0
+            self._fps = self._config.fps
+            self._pixel_format = self._config.pixel_format
+            self._roi = self._roi_limits.full_frame()
 
     def _set_user_id(self, value: object) -> None:
         text = str(value)

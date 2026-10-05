@@ -2,12 +2,14 @@
 
 Values come from CameraStatusService and are refreshed at ``refresh_hz`` (not per rendered frame);
 nothing is updated while the section is collapsed. The list grows with the number of cameras up to
-``MAX_VISIBLE_ROWS`` and scrolls beyond that.
+``MAX_VISIBLE_ROWS`` and scrolls beyond that, unless the user has resized it by dragging the
+handle above the section (then that height is kept).
 """
 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 
 import dearpygui.dearpygui as dpg
 
@@ -16,6 +18,7 @@ from app.models.camera_status import CameraStatus
 from app.services.camera_status_service import CameraStatusService
 from app.ui import theme
 from app.ui.theme import STATE_COLORS, STATE_NAMES, bind, caption, secondary_text, use_font
+from app.ui.widgets import Splitter
 
 ROW_HEIGHT = 29  # body font row in a compact table
 HEADER_ROW_HEIGHT = 23
@@ -24,6 +27,7 @@ MAX_VISIBLE_ROWS = 6
 # Fixed widths keep the figures next to the camera name; a trailing stretch column takes the rest.
 COLUMNS = (("Camera", 300.0), ("Status", 120.0), ("Bandwidth", 150.0), ("FPS", 90.0), ("Frames", 120.0), ("", 0.0))
 DASH = "—"
+MIN_BODY_HEIGHT = 60
 
 
 class _Line:
@@ -70,14 +74,21 @@ class _Line:
 
 
 class StatusPanel:
-    def __init__(self, parent: int | str, statuses: CameraStatusService, refresh_hz: float, default_open: bool = True) -> None:
+    def __init__(self, parent: int | str, statuses: CameraStatusService, refresh_hz: float, default_open: bool = True,
+                 height: int | None = None, max_height: Callable[[], float] = lambda: 600,
+                 on_resized: Callable[[int], None] | None = None) -> None:
         self._statuses = statuses
+        self._user_height = height  # None = fit to the rows
+        self._on_resized = on_resized
         self._interval = 1.0 / max(refresh_hz, 0.5)
         self._last_refresh = 0.0
         self._lines: dict[str, _Line] = {}
         self._camera_ids: tuple[str, ...] | None = None
 
         with dpg.group(parent=parent) as self.group:
+            self.splitter = Splitter(None, vertical=False, get_size=self.body_height, set_size=self._drag_to,
+                                     minimum=MIN_BODY_HEIGHT, maximum=max_height, sign=-1,
+                                     on_release=self._released, tooltip="Drag to resize Camera Status")
             self.header = dpg.add_collapsing_header(label="Camera Status", default_open=default_open)
             use_font(self.header, "heading")
             with dpg.child_window(parent=self.header, height=HEADER_ROW_HEIGHT + ROW_HEIGHT + BODY_PADDING,
@@ -125,9 +136,33 @@ class StatusPanel:
     def line_count(self) -> int:
         return len(self._lines)
 
+    def body_height(self) -> int:
+        return int(dpg.get_item_height(self._body))
+
+    def set_body_height(self, height: int) -> None:
+        """Fix the section height (as if dragged); it no longer fits itself to the rows."""
+        self._user_height = int(height)
+        dpg.configure_item(self._body, height=self._user_height)
+
+    def fit_to_rows(self) -> None:
+        """Back to the automatic height (one line per camera, up to MAX_VISIBLE_ROWS)."""
+        self._user_height = None
+        self._camera_ids = None  # rebuild and re-fit on the next update
+
+    def _drag_to(self, height: float) -> None:
+        self.set_body_height(int(height))
+
+    def _released(self, height: float) -> None:
+        if self._on_resized is not None:
+            self._on_resized(int(height))
+
     def update(self) -> None:
-        if not self.is_open:
+        is_open = self.is_open
+        if dpg.is_item_shown(self.splitter.button) != is_open:
+            dpg.configure_item(self.splitter.button, show=is_open)
+        if not is_open:
             return
+        self.splitter.update()
         statuses = self._statuses.statuses()
         camera_ids = tuple(s.camera_id for s in statuses)
         if camera_ids != self._camera_ids:
@@ -149,6 +184,9 @@ class StatusPanel:
         dpg.delete_item(self._table, children_only=True, slot=1)  # rows only; keep the columns
         self._lines = {status.camera_id: _Line(self._table, status) for status in statuses}
         dpg.configure_item(self._empty, show=not statuses)
+        if self._user_height is not None:
+            dpg.configure_item(self._body, height=self._user_height)
+            return
         visible = min(max(len(statuses), 1), MAX_VISIBLE_ROWS)
         dpg.configure_item(self._body, height=HEADER_ROW_HEIGHT + visible * ROW_HEIGHT + BODY_PADDING + 8)
         self._fit_pending = bool(statuses)
@@ -158,6 +196,9 @@ class StatusPanel:
         header_h = dpg.get_item_rect_size(self._columns_group)[1]
         table_h = dpg.get_item_rect_size(self._table_group)[1]
         rows = len(self._lines)
+        if self._user_height is not None:
+            self._fit_pending = False
+            return
         if header_h <= 0 or table_h <= 0 or not rows:
             return
         self._fit_pending = False

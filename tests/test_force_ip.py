@@ -13,11 +13,9 @@ from app.cameras.camera_manager import CameraManager
 from app.cameras.network import HostInterface, plan_force_ip, reachable_interface
 from app.models.camera_state import CameraState
 from app.services import network_service
-from app.services.camera_control_service import CameraControlService
 from app.services.camera_status_service import CameraStatusService
 from app.services.configuration import DEFAULT_CONFIG
 from app.services.network_service import NetworkService
-from app.services.profile_service import ProfileService, SettingsApplier
 from app.services.recording_service import RecordingService
 from app.ui.camera_sidebar import CameraSidebar
 from tests import fake_arena
@@ -115,12 +113,11 @@ def row(unreachable, tmp_path, monkeypatch):
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     cfg["recording"]["directory"] = str(tmp_path / "rec")
     recording = RecordingService(manager, cfg)
-    profiles = ProfileService(manager, SettingsApplier(manager, CameraControlService(manager)), tmp_path / "p")
     dpg.create_context()
     with dpg.window():
         with dpg.group() as parent:
             pass
-    bar = CameraSidebar(parent, manager, CameraStatusService(manager), recording, profiles, NetworkService(manager),
+    bar = CameraSidebar(parent, manager, CameraStatusService(manager), recording, NetworkService(manager),
                         on_property_grid=lambda cid: None)
     yield bar.rows[cam.camera_id], manager, cam
     manager.shutdown()

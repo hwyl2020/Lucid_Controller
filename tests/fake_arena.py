@@ -43,6 +43,20 @@ class FakeNode:
         super().__setattr__(key, value)
 
 
+class FakeCommand:
+    """Command node (``execute()``), e.g. UserSetLoad."""
+
+    def __init__(self, action=None, writable=True):
+        self.is_readable, self.is_writable = False, writable
+        self.executed = 0
+        self._action = action
+
+    def execute(self):
+        self.executed += 1
+        if self._action is not None:
+            self._action()
+
+
 class FakeNodemap:
     def __init__(self, nodes: dict[str, FakeNode], write_log: list | None = None):
         self.nodes = nodes
@@ -51,6 +65,27 @@ class FakeNodemap:
         if name not in self.nodes:
             raise ValueError(f"'{name}' node does not exist in this nodemap")
         return self.nodes[name]
+
+    # Feature streams (arena_api _nodemap.py): "Name<TAB>Value" lines of the writable features.
+    def write_streamable_node_values_to(self, file_name=None):
+        lines = ["# GenApi persistence file (fake)"]
+        for name, node in self.nodes.items():
+            if isinstance(node, FakeNode) and node.is_writable and node.value is not None:
+                lines.append(f"{name}\t{node.value}")
+        with open(file_name, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+    def read_streamable_node_values_from(self, file_name):
+        with open(file_name, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip() or line.startswith("#"):
+                    continue
+                name, value = line.rstrip("\n").split("\t", 1)
+                node = self.nodes.get(name)
+                if node is None:
+                    raise Exception(f"Arena ERROR : GenICam node {name} not found -1016")
+                current = node.value
+                node.value = type(current)(value) if not isinstance(current, bool) else value == "True"
 
 
 class FakeBuffer:

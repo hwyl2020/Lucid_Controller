@@ -1,4 +1,4 @@
-"""Small modal dialogs: text prompt, pick-from-list, message.
+"""Small modal dialogs: text prompt, pick-from-list, confirmation, message.
 
 Layout: generous padding, prompt text, field, then right-aligned buttons with the default action
 (OK) as the accent-filled primary button on the right.
@@ -14,6 +14,7 @@ from app.ui.theme import bind, secondary_text
 
 WIDTH = 440
 BUTTON_WIDTH = 92
+WIDE_BUTTON_WIDTH = 150
 
 
 def _center(width: int = WIDTH) -> tuple[int, int]:
@@ -21,11 +22,12 @@ def _center(width: int = WIDTH) -> tuple[int, int]:
 
 
 def _window(title: str, width: int = WIDTH):
-    window = dpg.window(label=title, modal=True, width=width, no_resize=True, no_collapse=True, pos=_center(width))
+    window = dpg.window(label=title, modal=True, width=width, no_collapse=True, pos=_center(width))
     return window
 
 
-def _buttons(window, primary: tuple[str, Callable[[], None]] | None, cancel: str | None = "Cancel") -> None:
+def _buttons(window, primary: tuple[str, Callable[[], None]] | None, cancel: str | None = "Cancel",
+             primary_role: str = "primary") -> None:
     """Right-aligned button row: [Cancel] [Primary]."""
     with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit, borders_innerH=False, borders_outerH=False,
                    borders_innerV=False, borders_outerV=False):
@@ -38,8 +40,9 @@ def _buttons(window, primary: tuple[str, Callable[[], None]] | None, cancel: str
                     dpg.add_button(label=cancel, width=BUTTON_WIDTH, callback=lambda: dpg.delete_item(window))
                 if primary:
                     label, action = primary
-                    ok = dpg.add_button(label=label, width=BUTTON_WIDTH, callback=action)
-                    bind(ok, "primary")
+                    ok = dpg.add_button(label=label, width=BUTTON_WIDTH if len(label) <= 8 else WIDE_BUTTON_WIDTH,
+                                        callback=action)
+                    bind(ok, primary_role)
 
 
 def prompt_text(title: str, label: str, on_ok: Callable[[str], None], default: str = "") -> None:
@@ -63,6 +66,16 @@ def choose(title: str, label: str, items: list[str], on_ok: Callable[[str], None
             listbox = dpg.add_listbox(items, default_value=items[0], width=-1, num_items=min(8, len(items)))
             dpg.add_spacer(height=2)
             _buttons(window, ("OK", lambda: _finish(window, lambda: on_ok(dpg.get_value(listbox)))))
+    bind(window, "dialog")
+
+
+def confirm(title: str, text: str, ok_label: str, on_ok: Callable[[], None], danger: bool = False) -> None:
+    """Ask before an action that changes cameras; ``danger`` paints the button red."""
+    width = WIDTH + 80
+    with _window(title, width) as window:
+        dpg.add_text(text, wrap=width - 40)
+        dpg.add_spacer(height=2)
+        _buttons(window, (ok_label, lambda: _finish(window, on_ok)), primary_role="danger" if danger else "primary")
     bind(window, "dialog")
 
 
