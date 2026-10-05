@@ -244,7 +244,7 @@ Platform-neutral, premium "camera workstation" look (Apple-level polish, not a m
   - Copying uses the SDK feature streams, as in LUCID's "Streamables" example: `nodemap.write_streamable_node_values_to(file)` and `read_streamable_node_values_from(file)`, via a temp file.
   - `filter_streamable` drops `Gev*` and `DeviceUserID` lines, so IPs and camera names are never copied.
   - Reset follows LUCID's "Reset Device Settings" example: `UserSetSelector = "Default"`, then `UserSetLoad.execute()`.
-  - Not yet verified on hardware: the camera was unplugged when this was built.
+  - Verified on the TRI122S-C: changed exposure/gain/format/width, then Reset gave back the factory values (BayerRG8, 4024 wide, auto exposure, 0 dB); exporting and re-importing 305 features reproduced every change, and no Gev/DeviceUserID lines were exported. The camera offers the user sets Default, UserSet1 and UserSet2. Copying to a second physical camera is not tested yet.
 - **Simulator:** `SimulatorCamera` uses JSON of its settings and clamps them to its own sensor.
 
 ### Force IP and stream-locked features
