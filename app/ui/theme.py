@@ -517,6 +517,15 @@ def _tile() -> None:
         dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0)
 
 
+def _tile_empty() -> None:
+    """Unassigned multiview slot: recedes into the canvas instead of a black hole."""
+    with dpg.theme_component(dpg.mvChildWindow):
+        _col(dpg.mvThemeCol_ChildBg, "surface")
+        dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 0)
+        dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 0)
+        dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0)
+
+
 def _compact_table() -> None:
     with dpg.theme_component(dpg.mvAll):
         dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 10, 3)
@@ -603,6 +612,7 @@ _ROLE_BUILDERS: dict[str, Callable[[], None]] = {
     "stat_tile": _stat_tile,
     "overlay": _overlay,
     "tile": _tile,
+    "tile_empty": _tile_empty,
     "compact_table": _compact_table,
     "tight": _tight,
     "image_button": _image_button,

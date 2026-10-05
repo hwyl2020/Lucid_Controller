@@ -30,6 +30,7 @@ from app.ui.theme import COLORS, STATE_COLORS, bind, text_width, use_font
 logger = logging.getLogger(__name__)
 
 BAR_HEIGHT = 40  # overlay bars (top: name + state capsule, bottom: FPS / frame id / errors)
+MIN_HEIGHT_FOR_BOTTOM_BAR = 130  # small tiles (e.g. 4 x 4) show only the top bar
 INSET = 0  # image inset inside the tile
 TEXT_X = 14
 TILE_ROUNDING = 10
@@ -99,7 +100,7 @@ class CameraView:
         self._format_text = ""
 
         self.tile = dpg.add_child_window(parent=parent, border=False, no_scrollbar=True, no_scroll_with_mouse=True)
-        bind(self.tile, "tile")
+        bind(self.tile, "tile_empty")  # rebound to "tile" when a camera is assigned
         # The image is inserted before the bars; the bars (child windows) render above it.
         self._message = dpg.add_text("No camera", parent=self.tile, color=OVERLAY_TEXT_DIM, pos=(TEXT_X, 40))
         use_font(self._message, "heading")
@@ -119,6 +120,7 @@ class CameraView:
         use_font(self._state, "caption")
         self._info = dpg.add_text("", parent=self._bottom_bar, color=OVERLAY_TEXT_DIM, pos=(TEXT_X, 13))
         self._format = dpg.add_text("", parent=self._bottom_bar, color=OVERLAY_TEXT_DIM, pos=(0, 13))
+        self._format_group = self._format
         use_font(self._info, "small")
         use_font(self._format, "small")
         self._capsule = None
@@ -141,6 +143,14 @@ class CameraView:
         dpg.set_value(self._message, "No camera" if camera_id is None else "Not streaming")
         dpg.show_item(self._message)
         self._message_key = None
+        bind(self.tile, "tile" if camera_id is not None else "tile_empty")
+        self._style_message()
+        if self._size != (0, 0):
+            self._draw_bars()
+
+    def _style_message(self) -> None:
+        empty = self.camera_id is None
+        dpg.configure_item(self._message, color=COLORS["text_tertiary"] if empty else OVERLAY_TEXT_DIM)
 
     def set_size(self, width: int, height: int) -> None:
         if (width, height) == self._size:
@@ -151,6 +161,9 @@ class CameraView:
         dpg.set_item_pos(self._top_bar, [0, 0])
         dpg.configure_item(self._bottom_bar, width=width, height=BAR_HEIGHT)
         dpg.set_item_pos(self._bottom_bar, [0, height - BAR_HEIGHT])
+        compact = height < MIN_HEIGHT_FOR_BOTTOM_BAR
+        dpg.configure_item(self._info, show=not compact)
+        dpg.configure_item(self._format_group, show=not compact)
         self._draw_bars()
         self._message_key = None
         self._layout_image()
@@ -234,7 +247,9 @@ class CameraView:
     def _draw_bars(self) -> None:
         """Gradients and rounded-corner masks; only on resize or theme change."""
         self._revision = theme.revision()
+        self._style_message()
         width = max(1, self._size[0])
+        empty = self.camera_id is None
         mask = (*COLORS["canvas"][:3], 255)
         r = TILE_ROUNDING
         h = BAR_HEIGHT
@@ -243,8 +258,9 @@ class CameraView:
             dpg.delete_item(drawlist, children_only=True)
             dpg.configure_item(drawlist, width=width, height=h)
             colors = [dark, dark, clear, clear] if top else [clear, clear, dark, dark]
-            dpg.draw_rectangle((0, 0), (width, h), multicolor=True, corner_colors=colors, fill=dark,
-                               color=clear, thickness=0, parent=drawlist)
+            if not empty and (top or self._size[1] >= MIN_HEIGHT_FOR_BOTTOM_BAR):  # else corners only
+                dpg.draw_rectangle((0, 0), (width, h), multicolor=True, corner_colors=colors, fill=dark,
+                                   color=clear, thickness=0, parent=drawlist)
             if top:
                 _corner_mask(drawlist, r, r, (0, 0), mask, r)
                 _corner_mask(drawlist, width - r, r, (width, 0), mask, r)
@@ -291,7 +307,8 @@ class CameraView:
     def _place_format(self) -> None:
         width = text_width(self._format_text, "small")
         info_w = text_width(dpg.get_value(self._info) or "", "small")
-        fits = TEXT_X + info_w + 24 + width + TEXT_X <= self._size[0]
+        fits = (TEXT_X + info_w + 24 + width + TEXT_X <= self._size[0]
+                and self._size[1] >= MIN_HEIGHT_FOR_BOTTOM_BAR)
         dpg.configure_item(self._format, show=fits)
         dpg.set_item_pos(self._format, [max(TEXT_X, self._size[0] - TEXT_X - width), 13])
 

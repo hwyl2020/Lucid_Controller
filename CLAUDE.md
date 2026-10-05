@@ -150,15 +150,15 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
   - Failures become warnings rather than exceptions.
 - **Settings window** (File ▸ Settings): edits and saves `config.json`, and applies the theme, log level, auto-reconnect and recording settings live. Recording settings take effect on the next recording.
 - **Diagnostics** (File ▸ Export diagnostics): writes `diagnostics/diagnostics_*.zip` with system, network, camera and config info plus the logs. It never opens the SDK itself.
-- **Theming:** light/dark palettes in `theme.py` must set the bar, table and popup colours too, otherwise Dear PyGui keeps its dark defaults. Use `(-255, 0, 0, 255)` as a text colour to mean "theme default".
+- **Theming:** see "Design system" below. Palettes must set the bar, table and popup colours too, otherwise Dear PyGui keeps its dark defaults. Use `(-255, 0, 0, 255)` (`THEME_TEXT`) as a text colour to mean "theme default".
 - **Verified on the TRI122S-C:** the performance monitor showed 9.1 FPS, 111 MB/s, 0 missed frames, NIC `Ethernet`. Profile save/apply worked with no warnings.
 
 ### UI layout and conventions (UI polish pass)
 
-- **Tiles:** the image is fitted to the whole tile (aspect kept, centred; no crop or stretch). Name/state and FPS sit on translucent overlay bars, which are child windows because drawlists ignore `pos` in Dear PyGui.
+- **Tiles:** the image is fitted to the whole tile (aspect kept, centred; no crop or stretch). Name, state capsule (LIVE / STANDBY / OFF / ERROR, blinking REC) and FPS / resolution sit on gradient overlay bars: child windows (drawlists ignore `pos`) each holding a drawlist that paints the gradient, the capsule and the tile's rounded corners (corner masks in the canvas colour; Dear PyGui can't clip an image to a rounded rect). Bars are redrawn only on resize or theme change. Unassigned slots use the receding `tile_empty` style.
 - **Camera Status:** one line per camera (fixed columns plus a stretch filler); it grows up to 6 rows, then scrolls.
 - **Layout, top to bottom:**
-  - toolbar;
+  - toolbar (title, live / REC / error pills, layout segmented control on the right);
   - sidebar + multiview;
   - collapsible **Camera Status** section (`status_panel.py`);
   - collapsible **Logs** section (`log_panel.py`);
@@ -179,16 +179,25 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
   - Filter segments: All, Debug, Info, Warning, Error. Each shows that exact level; Error also includes Critical.
   - Auto-scroll pins to the bottom every frame while it is enabled.
 - **Refresh rates:** the panels refresh at `ui.stats_refresh_hz` (default 5) and do no work while collapsed. Collapsed/expanded state lasts for the session; the defaults come from `config.ui.*_panel_open`.
-- **Fonts and themes:**
-  - `theme.load_fonts()` must run before widgets are built. It loads Segoe UI (body), Segoe UI Semibold (headings) and Consolas (log lines); `use_font(item, role)` applies them.
-  - `compact_table_theme()` is for dense tables, `plain_button_theme()` for disclosure arrows, and `segment_selected_theme()` for the active segment.
+- **Fonts:** `theme.load_fonts()` must run before widgets are built. Roles (`use_font(item, role)`): `title` 21 / `heading` 16 / `metric` 19 / `caption` 13 (Segoe UI Semibold), `body` 16 / `small` 14 (Segoe UI), `mono` 14 (Consolas).
+
+### Design system (`app/ui/theme.py`, `app/ui/widgets.py`)
+
+Platform-neutral, premium "camera workstation" look (Apple-level polish, not a macOS imitation).
+- **Tokens:** `PALETTES[dark|light]` (canvas, surface, card, raised, control/_hover/_active, segment_on, separator, border, text, text_secondary, text_tertiary, bar, stage, ...), `ACCENTS` (Azure default, Indigo, Violet, Teal, Graphite; dark + light variant each) and per-theme status colours (success = live/on, warning, error = record/error). Accent is for focus, selection and primary actions only; status colours only for status. Camera images always sit on the dark `stage`, also in light mode.
+- **Live switching:** `COLORS` / `STATE_COLORS` are mutated in place by `theme.apply(theme, accent)`. Component themes come from `role(name)` (created once per context, colours registered by token, recoloured with `dpg.set_value`), so switching never rebuilds widgets. Colours baked into items (`color=`, drawlists) must be refreshed when `theme.revision()` changes. `theme.on_apply` callbacks redraw textures (the switch). Item ids are reused across Dear PyGui contexts (tests), so caches key off `context_generation()`.
+- **Roles:** `surface` (sidebar/sections), `card` / `card_selected` (camera cards; selection = accent border), `canvas`, `bar`, `primary`, `danger`, `record_idle` (red label), `ghost` (icon buttons), `segment_track` / `segment_on`, `pill_*` badges, `callout_warning`, `stat_tile`, `tile` / `tile_empty` / `overlay`, `compact_table`, `tight`, `stack`, `search`, `dialog`. Helpers: `caption()` (upper-case tertiary label; `upper=False` for units like Mb/s), `secondary_text()`, `SegmentedControl`, `nudge(dy)` (vertical alignment of mixed-height controls), `text_width()`.
+- **Shapes and spacing:** 4/8 px grid; controls radius 8, cards 10-12, pills fully round; item spacing 8; window padding 16×14.
+- **States:** bind role themes only when the state changes (`CameraRow._bind`), never per frame. Disabled widgets get an explicit `enabled_state=False` component in the global theme.
+- **Vocabulary:** camera states read Off / Standby / Live / Error everywhere (`STATE_NAMES`).
+- **Glyphs:** Segoe UI has ● ► ■ · × — … but not U+22EE or U+25B6; check any new glyph before use.
 - **Texture sizing:** textures are sized from the image as displayed (`camera_view.texture_side_for`), not from the tile's longest side. The old rule converted about 20× more pixels than shown in short tiles. With 4 simulators and both sections open, multiview cost went from 52 ms to 4 ms per frame.
 
 ### Per-camera rows and Property Grid
 
 - **Sidebar rows:** `CameraSidebar` holds one `CameraRow` (`app/ui/camera_row.py`) per camera.
-  - The header shows disclosure arrow · state dot · `Model (Serial)` · IP · `···` menu.
-  - The expandable panel holds that camera's **power toggle (ON/OFF = open/close the camera)** with a separate **► / ■ stream button** in the same row, video recording (format + record), image capture (format + capture), Property Grid button and stats.
+  - Each row is a card. Header line: disclosure arrow · state dot · `Model (Serial)` · `···` menu; second line: IP · state (Recording in red).
+  - The expandable panel holds that camera's **power switch** (`widgets.Switch`, an image button whose hidden label is "ON"/"OFF"; on/off = open/close the camera) with a separate **► Start / ■ Stop stream button** in the same row, video recording (format + record), image capture (format + capture), Mb/s / FPS / Frames metric blocks and the Property Grid button.
   - Power and streaming are deliberately separate. With the camera ON but not streaming, settings the camera locks during acquisition (pixel format, ROI, ...) can be changed in the Property Grid.
   - Every control acts on its own camera only and shows the real state from `CameraManager` every frame. Open/close/start/stop run on a worker thread, so one camera never blocks another.
   - Stopping the stream or turning the camera off finishes that camera's recording first. Record and Capture need a running stream.

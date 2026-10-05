@@ -173,10 +173,12 @@ class CameraRow:
                     for _ in range(3):
                         dpg.add_table_column()
                     with dpg.table_row():
-                        self._metrics = [dpg.add_text(DASH) for _ in range(3)]
-                    with dpg.table_row():
+                        self._metrics = []
                         for label in ("Mb/s", "FPS", "Frames"):
-                            caption(label, upper=False)
+                            with dpg.group() as block:
+                                self._metrics.append(dpg.add_text(DASH))
+                                caption(label, upper=False)
+                            bind(block, "stack")
                 bind(metrics, "compact_table")
                 for item in self._metrics:
                     use_font(item, "metric")

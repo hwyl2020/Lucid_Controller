@@ -82,29 +82,31 @@ class StatusPanel:
             use_font(self.header, "heading")
             with dpg.child_window(parent=self.header, height=HEADER_ROW_HEIGHT + ROW_HEIGHT + BODY_PADDING,
                                   border=True) as self._body:
-                with dpg.group() as self._columns_group:
-                    with dpg.table(header_row=False, borders_innerH=False, borders_outerH=False,
-                                   borders_innerV=False, borders_outerV=False,
-                                   policy=dpg.mvTable_SizingStretchProp) as self._columns:
-                        for label, width in COLUMNS:
-                            if width:
-                                dpg.add_table_column(width_fixed=True, init_width_or_weight=width)
-                            else:
-                                dpg.add_table_column(width_stretch=True)
-                        with dpg.table_row():
-                            for label, _ in COLUMNS:
-                                caption(label) if label else dpg.add_text("")
-                with dpg.group() as self._table_group:
-                    with dpg.table(header_row=False, row_background=True, borders_innerH=False, borders_outerH=False,
-                                   borders_innerV=False, borders_outerV=False,
-                                   policy=dpg.mvTable_SizingStretchProp) as self._table:
-                        for label, width in COLUMNS:
-                            if width:
-                                dpg.add_table_column(width_fixed=True, init_width_or_weight=width)
-                            else:
-                                dpg.add_table_column(width_stretch=True)
+                with dpg.group() as stack:  # no gap between the column captions and the rows
+                    with dpg.group() as self._columns_group:
+                        with dpg.table(header_row=False, borders_innerH=False, borders_outerH=False,
+                                       borders_innerV=False, borders_outerV=False,
+                                       policy=dpg.mvTable_SizingStretchProp) as self._columns:
+                            for label, width in COLUMNS:
+                                if width:
+                                    dpg.add_table_column(width_fixed=True, init_width_or_weight=width)
+                                else:
+                                    dpg.add_table_column(width_stretch=True)
+                            with dpg.table_row():
+                                for label, _ in COLUMNS:
+                                    caption(label) if label else dpg.add_text("")
+                    with dpg.group() as self._table_group:
+                        with dpg.table(header_row=False, row_background=True, borders_innerH=False, borders_outerH=False,
+                                       borders_innerV=False, borders_outerV=False,
+                                       policy=dpg.mvTable_SizingStretchProp) as self._table:
+                            for label, width in COLUMNS:
+                                if width:
+                                    dpg.add_table_column(width_fixed=True, init_width_or_weight=width)
+                                else:
+                                    dpg.add_table_column(width_stretch=True)
                 self._empty = secondary_text("No cameras", show=False)
         bind(self._body, "surface")
+        bind(stack, "stack")
         bind(self._columns, "compact_table")
         bind(self._table, "compact_table")
         self._fit_pending = False
@@ -160,5 +162,5 @@ class StatusPanel:
             return
         self._fit_pending = False
         visible = min(rows, MAX_VISIBLE_ROWS)
-        height = header_h + 8 + table_h * visible / rows + 2 * 12
+        height = header_h + table_h * visible / rows + 2 * 12
         dpg.configure_item(self._body, height=int(round(height)))
