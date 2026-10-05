@@ -18,14 +18,12 @@ from app.cameras.camera_device import CameraError
 from app.models.camera_state import CameraState
 from app.models.features import Feature, FeatureCategory, FeatureKind, Visibility
 from app.services.feature_service import FeatureService, matches
-from app.ui.theme import STATE_COLORS, TEXT_DIM, WARNING_COLOR, compact_table_theme, use_font
+from app.ui.theme import COLORS, THEME_TEXT, bind, nudge, secondary_text, use_font
 from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
 VISIBILITY_LABELS = {"Beginner": Visibility.BEGINNER, "Expert": Visibility.EXPERT, "Guru": Visibility.GURU}
-ERROR_COLOR = STATE_COLORS[CameraState.ERROR]
-OK_COLOR = STATE_COLORS[CameraState.ACQUIRING]
 ACCESS_LABELS = {"RW": "Read/Write", "RO": "Read only", "WO": "Write only", "NA": "Not available", "NI": "Not implemented"}
 
 
@@ -72,23 +70,31 @@ class PropertyGridWindow:
         self._categories: list[tuple[int | str, list[str], list]] = []  # (tree_node, feature names, child nodes)
         self._open_categories: set[str] = set()
         self._keep_message = False
-        self._compact = compact_table_theme()
 
-        with dpg.window(label=f"{title} — Property Grid", width=660, height=640, pos=pos,
+        with dpg.window(label=f"{title}  ·  Property Grid", width=700, height=680, pos=pos,
                         on_close=self._close, no_collapse=True) as self.window:
             with dpg.group(horizontal=True):
-                self._search = dpg.add_input_text(hint="Search properties", width=260,
+                self._search = dpg.add_input_text(hint="Search properties", width=300,
                                                   callback=lambda: self._apply_filter())
-                dpg.add_text("Show", color=TEXT_DIM)
-                self._visibility = dpg.add_combo(list(VISIBILITY_LABELS), default_value="Expert", width=100,
+                dpg.add_spacer(width=4)
+                with nudge(1):
+                    show = secondary_text("Show")
+                self._visibility = dpg.add_combo(list(VISIBILITY_LABELS), default_value="Expert", width=110,
                                                  callback=lambda: self._apply_filter())
-                dpg.add_button(label="Refresh", callback=lambda: self.reload())
-            self._message = dpg.add_text("Loading features…", color=TEXT_DIM, wrap=630)
-            self._streaming_hint = dpg.add_text(
-                "Streaming: features the camera locks during acquisition (e.g. Pixel Format, Width, Height) "
-                "are read-only. Stop the stream with ■ (the camera stays on) to change them.",
-                color=WARNING_COLOR, wrap=630, show=self._last_state is CameraState.ACQUIRING)
+                dpg.add_button(label="Refresh", width=84, callback=lambda: self.reload())
+            bind(self._search, "search")
+            use_font(show, "small")
+            self._message = secondary_text("Loading features…", wrap=650)
+            use_font(self._message, "small")
+            with dpg.child_window(auto_resize_y=True, show=self._last_state is CameraState.ACQUIRING,
+                                  no_scrollbar=True) as self._streaming_hint:
+                hint = dpg.add_text(
+                    "Streaming — features the camera locks during acquisition (e.g. Pixel Format, Width, "
+                    "Height) are read-only. Stop the stream (the camera stays on) to change them.", wrap=620)
+            bind(self._streaming_hint, "callout_warning")
+            use_font(hint, "small")
             self._body = dpg.add_child_window(border=True)
+            bind(self._body, "surface")
         self.reload()
 
     # --- lifecycle ------------------------------------------------------------
@@ -176,13 +182,13 @@ class PropertyGridWindow:
             with dpg.table(parent=node, header_row=False, row_background=True, borders_innerH=False,
                            borders_outerH=False, borders_innerV=False, borders_outerV=False,
                            policy=dpg.mvTable_SizingFixedFit) as table:
-                dpg.add_table_column(width_fixed=True, init_width_or_weight=230)
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=240)
                 dpg.add_table_column(width_stretch=True)
-                dpg.add_table_column(width_fixed=True, init_width_or_weight=90)
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=96)
                 for feature in category.features:
                     self._rows[feature.name] = (feature, self._feature_row(table, feature))
                     names.append(feature.name)
-            dpg.bind_item_theme(table, self._compact)
+            bind(table, "compact_table")
         children = [self._category_node(sub, node) for sub in category.subcategories]
         return node, names, children
 
@@ -193,19 +199,22 @@ class PropertyGridWindow:
                 dpg.add_text(feature_tooltip(feature), wrap=420)
             self._editor(feature)
             access = "Error" if feature.error else ACCESS_LABELS.get(feature.access, feature.access)
-            dpg.add_text(access, color=ERROR_COLOR if feature.error else TEXT_DIM)
+            item = secondary_text(access)
+            use_font(item, "small")
+            if feature.error:
+                dpg.configure_item(item, color=COLORS["error"])
         return row
 
     def _editor(self, feature: Feature) -> None:
         kind, name = feature.kind, feature.name
         if feature.error:
-            dpg.add_text("—", color=TEXT_DIM)
+            secondary_text("—")
         elif not feature.available:
-            dpg.add_text("Not available", color=TEXT_DIM)
+            secondary_text("Not available")
         elif kind is FeatureKind.COMMAND:
             dpg.add_button(label="Execute", enabled=feature.writable, callback=lambda: self._execute(name))
         elif kind is FeatureKind.REGISTER:
-            dpg.add_text("(register)", color=TEXT_DIM)
+            secondary_text("(register)")
         elif not feature.writable:
             dpg.add_text(format_value(feature))
         elif kind is FeatureKind.BOOLEAN:
@@ -277,6 +286,6 @@ class PropertyGridWindow:
 
     def _show(self, text: str, error: bool, dim: bool = False) -> None:
         self._keep_message = not dim
-        color = ERROR_COLOR if error else (TEXT_DIM if dim else OK_COLOR)
+        color = COLORS["error"] if error else (THEME_TEXT if dim else COLORS["success"])
         dpg.set_value(self._message, text)
         dpg.configure_item(self._message, color=color)

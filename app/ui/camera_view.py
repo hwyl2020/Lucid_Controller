@@ -1,13 +1,18 @@
 """One multiview tile: live image fitted to the whole tile, with name/state and FPS on overlay bars.
 
 The image always keeps the camera's aspect ratio (no crop, no stretch) and is centred; the tile's
-title and statistics are drawn on translucent bars over the image instead of taking their own rows,
-so the image can use the full tile height.
+title and statistics sit on translucent gradient bars over the image instead of taking their own
+rows, so the image can use the full tile height.
+
+Overlay bars are child windows (drawlists ignore ``pos`` in Dear PyGui, child windows don't) with
+a drawlist inside each that paints the gradient, the state capsule and the tile's rounded corners
+(corner masks in the canvas colour, since Dear PyGui cannot clip an image to a rounded rect).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import time
 
 import dearpygui.dearpygui as dpg
@@ -19,17 +24,26 @@ from app.models.camera_state import CameraState
 from app.models.camera_status import camera_display_name
 from app.services.reconnect_service import ReconnectService
 from app.services.recording_service import RecordingService
-from app.ui.theme import STATE_COLORS, use_font
+from app.ui import theme
+from app.ui.theme import COLORS, STATE_COLORS, bind, text_width, use_font
 
 logger = logging.getLogger(__name__)
 
-BAR_HEIGHT = 26  # overlay bars (top: name + state, bottom: FPS / frame id / errors)
-INSET = 1  # keep the image inside the tile border
-TEXT_X = 10
-OVERLAY_BG = (0, 0, 0, 115)
-OVERLAY_TEXT = (240, 240, 245)
-OVERLAY_TEXT_DIM = (200, 200, 206)
-TILE_ROUNDING = 4
+BAR_HEIGHT = 40  # overlay bars (top: name + state capsule, bottom: FPS / frame id / errors)
+INSET = 0  # image inset inside the tile
+TEXT_X = 14
+TILE_ROUNDING = 10
+GRADIENT_ALPHA = 165
+OVERLAY_TEXT = (246, 247, 250)
+OVERLAY_TEXT_DIM = (200, 206, 216)
+CAPSULE_H = 22
+CAPSULE_BG = (24, 27, 34, 200)  # glass capsule, visible on black and bright images
+STATE_LABELS = {
+    CameraState.DISCONNECTED: "OFF",
+    CameraState.CONNECTED: "STANDBY",
+    CameraState.ACQUIRING: "LIVE",
+    CameraState.ERROR: "ERROR",
+}
 # Texture long-side sizes. The texture is sized to the image as displayed in the tile (rounded up
 # to one of these) so conversion cost scales with what is shown, without recreating textures on
 # every resize. Sizing by the tile's longest side instead converted ~20x more pixels than shown in
@@ -53,33 +67,15 @@ def fit_image(image_w: int, image_h: int, box_w: int, box_h: int) -> tuple[int, 
     return (box_w - w) // 2, (box_h - h) // 2, w, h
 
 
-_tile_theme: int | None = None
-_bar_theme: int | None = None
-
-
-def _bar_theme_id() -> int:
-    """Translucent overlay bar. Child windows honour pos and draw above the parent's image
-    (drawlists ignore pos in Dear PyGui, so they cannot be used for the bottom bar)."""
-    global _bar_theme
-    if _bar_theme is None or not dpg.does_item_exist(_bar_theme):
-        with dpg.theme() as _bar_theme:
-            with dpg.theme_component(dpg.mvChildWindow):
-                dpg.add_theme_color(dpg.mvThemeCol_ChildBg, OVERLAY_BG)
-                dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 0)
-                dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 0)
-                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0)
-    return _bar_theme
-
-
-def _tile_theme_id() -> int:
-    global _tile_theme
-    if _tile_theme is None or not dpg.does_item_exist(_tile_theme):
-        with dpg.theme() as _tile_theme:
-            with dpg.theme_component(dpg.mvChildWindow):
-                dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, TILE_ROUNDING)
-                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0)
-                dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (14, 14, 15))  # neutral letterbox
-    return _tile_theme
+def _corner_mask(drawlist, cx: float, cy: float, corner: tuple[float, float], fill, radius: float) -> None:
+    """Fill the area between a rectangle corner and its rounded arc (triangle fan from the corner)."""
+    sx, sy = corner
+    start = math.atan2(sy - cy, sx - cx) - math.pi / 4
+    steps = 8
+    points = [(cx + radius * math.cos(start + i * (math.pi / 2) / steps),
+               cy + radius * math.sin(start + i * (math.pi / 2) / steps)) for i in range(steps + 1)]
+    for a, b in zip(points, points[1:]):
+        dpg.draw_triangle(corner, a, b, color=(0, 0, 0, 0), fill=fill, thickness=0, parent=drawlist)
 
 
 class CameraView:
@@ -97,21 +93,35 @@ class CameraView:
         self._display_window_start = time.perf_counter()
         self._display_fps = 0.0
         self._last_frame_id: int | None = None
+        self._badge: tuple | None = None  # (label, bg, dot, revision) currently drawn
+        self._revision = -1
+        self._message_key: tuple | None = None
+        self._format_text = ""
 
-        self.tile = dpg.add_child_window(parent=parent, border=True, no_scrollbar=True)
-        dpg.bind_item_theme(self.tile, _tile_theme_id())
+        self.tile = dpg.add_child_window(parent=parent, border=False, no_scrollbar=True, no_scroll_with_mouse=True)
+        bind(self.tile, "tile")
         # The image is inserted before the bars; the bars (child windows) render above it.
         self._message = dpg.add_text("No camera", parent=self.tile, color=OVERLAY_TEXT_DIM, pos=(TEXT_X, 40))
-        self._top_bar = dpg.add_child_window(parent=self.tile, width=1, height=BAR_HEIGHT, pos=(INSET, INSET),
+        use_font(self._message, "heading")
+        self._top_bar = dpg.add_child_window(parent=self.tile, width=1, height=BAR_HEIGHT, pos=(0, 0),
                                              border=False, no_scrollbar=True, no_scroll_with_mouse=True)
-        self._bottom_bar = dpg.add_child_window(parent=self.tile, width=1, height=BAR_HEIGHT, pos=(INSET, INSET),
+        self._bottom_bar = dpg.add_child_window(parent=self.tile, width=1, height=BAR_HEIGHT, pos=(0, 0),
                                                 border=False, no_scrollbar=True, no_scroll_with_mouse=True)
         for bar in (self._top_bar, self._bottom_bar):
-            dpg.bind_item_theme(bar, _bar_theme_id())
-        self._title = dpg.add_text("", parent=self._top_bar, pos=(TEXT_X, 4), color=OVERLAY_TEXT)
+            bind(bar, "overlay")
+        self._top_draw = dpg.add_drawlist(1, BAR_HEIGHT, parent=self._top_bar)
+        self._bottom_draw = dpg.add_drawlist(1, BAR_HEIGHT, parent=self._bottom_bar)
+        self._title = dpg.add_text("", parent=self._top_bar, pos=(TEXT_X, 9), color=OVERLAY_TEXT)
         use_font(self._title, "heading")
-        self._state = dpg.add_text("", parent=self._top_bar, pos=(TEXT_X, 4))
-        self._info = dpg.add_text("", parent=self._bottom_bar, color=OVERLAY_TEXT_DIM, pos=(TEXT_X, 4))
+        self._dot = dpg.add_text("●", parent=self._top_bar, pos=(0, 11))
+        self._state = dpg.add_text("", parent=self._top_bar, pos=(0, 12), color=OVERLAY_TEXT)
+        use_font(self._dot, "caption")
+        use_font(self._state, "caption")
+        self._info = dpg.add_text("", parent=self._bottom_bar, color=OVERLAY_TEXT_DIM, pos=(TEXT_X, 13))
+        self._format = dpg.add_text("", parent=self._bottom_bar, color=OVERLAY_TEXT_DIM, pos=(0, 13))
+        use_font(self._info, "small")
+        use_font(self._format, "small")
+        self._capsule = None
 
     # --- public -----------------------------------------------------------
     def assign(self, camera_id: str | None, manager: CameraManager) -> None:
@@ -121,25 +131,28 @@ class CameraView:
         self.camera_id = camera_id
         self._last_frame_id = None
         if camera_id is None:
-            dpg.set_value(self._title, "")
+            title = ""
         else:
             cam = manager.camera(camera_id)
-            dpg.set_value(self._title, camera_display_name(cam.model, cam.serial_number))
+            title = camera_display_name(cam.model, cam.serial_number)
+        dpg.set_value(self._title, title)
+        dpg.set_item_user_data(self._title, title)
+        self._badge = None
         dpg.set_value(self._message, "No camera" if camera_id is None else "Not streaming")
         dpg.show_item(self._message)
+        self._message_key = None
 
     def set_size(self, width: int, height: int) -> None:
         if (width, height) == self._size:
             return
         self._size = (width, height)
         dpg.configure_item(self.tile, width=width, height=height)
-        inner_w = max(1, width - 2 * INSET)
-        dpg.configure_item(self._top_bar, width=inner_w, height=BAR_HEIGHT)
-        dpg.set_item_pos(self._top_bar, [INSET, INSET])
-        dpg.configure_item(self._bottom_bar, width=inner_w, height=BAR_HEIGHT)
-        dpg.set_item_pos(self._bottom_bar, [INSET, height - INSET - BAR_HEIGHT])
-        dpg.set_item_pos(self._state, [max(TEXT_X, inner_w - 120), 4])
-        dpg.set_item_pos(self._message, [TEXT_X, max(BAR_HEIGHT + 8, height // 2 - 10)])
+        dpg.configure_item(self._top_bar, width=width, height=BAR_HEIGHT)
+        dpg.set_item_pos(self._top_bar, [0, 0])
+        dpg.configure_item(self._bottom_bar, width=width, height=BAR_HEIGHT)
+        dpg.set_item_pos(self._bottom_bar, [0, height - BAR_HEIGHT])
+        self._draw_bars()
+        self._message_key = None
         self._layout_image()
 
     @property
@@ -152,37 +165,47 @@ class CameraView:
         recording: RecordingService | None = None,
         reconnect: ReconnectService | None = None,
     ) -> None:
+        if theme.revision() != self._revision:
+            self._draw_bars()  # corner masks use the canvas colour
+        self._place_message()
         if self.camera_id is None:
-            dpg.set_value(self._state, "")
+            self._set_badge(None, None, None)
             dpg.set_value(self._info, "")
             return
 
         state = manager.state(self.camera_id)
         if state is CameraState.ACQUIRING and recording is not None and recording.is_recording(self.camera_id):
-            dpg.set_value(self._state, "● REC")
-            dpg.configure_item(self._state, color=STATE_COLORS[CameraState.ERROR])
+            blink = int(time.monotonic() * 2) % 2 == 0
+            self._set_badge("REC", (*COLORS["error"], 235), (255, 255, 255) if blink else (255, 255, 255, 90))
+        elif state is CameraState.ERROR:
+            self._set_badge("ERROR", (*COLORS["error"], 200), (255, 255, 255))
         else:
-            dpg.set_value(self._state, f"● {state.value}")
-            dpg.configure_item(self._state, color=STATE_COLORS[state])
+            self._set_badge(STATE_LABELS[state], CAPSULE_BG, STATE_COLORS[state])
 
         frame = manager.latest_frame(self.camera_id)
         if frame is not None:
             self._show_frame(frame)
+            fmt = f"{frame.width} × {frame.height}  ·  {frame.pixel_format}"
+            if fmt != self._format_text:
+                self._format_text = fmt
+                dpg.set_value(self._format, fmt)
+                self._place_format()
 
         now = time.perf_counter()
         elapsed = now - self._display_window_start
         if elapsed >= 1.0:
             self._display_fps = self._display_frames / elapsed
             self._display_frames, self._display_window_start = 0, now
+            self._place_format()  # info width settles once figures are shown
 
         stats = manager.stats(self.camera_id)
         if stats is None:
             dpg.set_value(self._info, "")
         else:
-            frame_id = "-" if stats.last_frame_id is None else stats.last_frame_id
+            frame_id = "–" if stats.last_frame_id is None else f"{stats.last_frame_id:,}"
             dpg.set_value(
                 self._info,
-                f"cam {stats.measured_fps:5.1f} fps   disp {self._display_fps:5.1f} fps   #{frame_id}",
+                f"{stats.measured_fps:5.1f} fps   ·   display {self._display_fps:4.1f}   ·   #{frame_id}",
             )
         error = manager.last_error(self.camera_id)
         retry = reconnect.state(self.camera_id) if reconnect is not None and error else None
@@ -195,7 +218,7 @@ class CameraView:
         if error:
             # Keep the last image visible; report the error on the bottom bar (or centre if no image).
             dpg.set_value(self._info, error)
-            dpg.configure_item(self._info, color=STATE_COLORS[CameraState.ERROR])
+            dpg.configure_item(self._info, color=COLORS["error"])
             if self._image is None:
                 dpg.set_value(self._message, error)
                 dpg.show_item(self._message)
@@ -206,6 +229,85 @@ class CameraView:
         dpg.delete_item(self.tile)
         self._image = None
         self._drop_texture()
+
+    # --- overlay drawing --------------------------------------------------
+    def _draw_bars(self) -> None:
+        """Gradients and rounded-corner masks; only on resize or theme change."""
+        self._revision = theme.revision()
+        width = max(1, self._size[0])
+        mask = (*COLORS["canvas"][:3], 255)
+        r = TILE_ROUNDING
+        h = BAR_HEIGHT
+        clear, dark = (0, 0, 0, 0), (0, 0, 0, GRADIENT_ALPHA)
+        for drawlist, top in ((self._top_draw, True), (self._bottom_draw, False)):
+            dpg.delete_item(drawlist, children_only=True)
+            dpg.configure_item(drawlist, width=width, height=h)
+            colors = [dark, dark, clear, clear] if top else [clear, clear, dark, dark]
+            dpg.draw_rectangle((0, 0), (width, h), multicolor=True, corner_colors=colors, fill=dark,
+                               color=clear, thickness=0, parent=drawlist)
+            if top:
+                _corner_mask(drawlist, r, r, (0, 0), mask, r)
+                _corner_mask(drawlist, width - r, r, (width, 0), mask, r)
+            else:
+                _corner_mask(drawlist, r, h - r, (0, h), mask, r)
+                _corner_mask(drawlist, width - r, h - r, (width, h), mask, r)
+        self._capsule = None
+        self._badge = None
+
+    def _set_badge(self, label: str | None, bg, dot) -> None:
+        key = (label, bg, dot, self._revision, self._size[0])
+        if key == self._badge:
+            return
+        self._badge = key
+        if self._capsule is not None and dpg.does_item_exist(self._capsule):
+            dpg.delete_item(self._capsule)
+        self._capsule = None
+        if label is None:
+            dpg.set_value(self._state, "")
+            dpg.set_value(self._dot, "")
+            return
+        label_w = text_width(label, "caption")
+        capsule_w = 10 + 10 + 6 + label_w + 12
+        x0 = self._size[0] - 12 - capsule_w
+        y0 = (BAR_HEIGHT - CAPSULE_H) // 2 - 2
+        self._capsule = dpg.draw_rectangle((x0, y0), (x0 + capsule_w, y0 + CAPSULE_H), fill=bg, color=(0, 0, 0, 0),
+                                           rounding=CAPSULE_H / 2, thickness=0, parent=self._top_draw)
+        dpg.set_value(self._dot, "●")
+        dpg.configure_item(self._dot, color=dot)
+        dpg.set_item_pos(self._dot, [x0 + 10, y0 + 2])
+        dpg.set_value(self._state, label)
+        dpg.set_item_pos(self._state, [x0 + 26, y0 + 2])
+        self._fit_title(x0 - TEXT_X - 10)
+
+    def _fit_title(self, available: float) -> None:
+        """Elide the camera name so it never runs under the state capsule."""
+        full = dpg.get_item_user_data(self._title) or dpg.get_value(self._title)
+        dpg.set_item_user_data(self._title, full)
+        text = full
+        while text and text_width(text if text == full else text + "…", "heading") > available:
+            text = text[:-1]
+        dpg.set_value(self._title, full if text == full else (text.rstrip() + "…" if text else ""))
+
+    def _place_format(self) -> None:
+        width = text_width(self._format_text, "small")
+        info_w = text_width(dpg.get_value(self._info) or "", "small")
+        fits = TEXT_X + info_w + 24 + width + TEXT_X <= self._size[0]
+        dpg.configure_item(self._format, show=fits)
+        dpg.set_item_pos(self._format, [max(TEXT_X, self._size[0] - TEXT_X - width), 13])
+
+    def _place_message(self) -> None:
+        if not dpg.is_item_shown(self._message):
+            return
+        text = dpg.get_value(self._message)
+        key = (text, self._size)
+        if key == self._message_key:
+            return
+        self._message_key = key
+        width = text_width(text, "heading")
+        x = max(TEXT_X, (self._size[0] - width) / 2)
+        dpg.configure_item(self._message, wrap=max(50, self._size[0] - 2 * TEXT_X))
+        dpg.set_item_pos(self._message, [x, max(BAR_HEIGHT + 4, self._size[1] // 2 - 12)])
+        self._place_format()
 
     # --- internals --------------------------------------------------------
     def _show_frame(self, frame) -> None:

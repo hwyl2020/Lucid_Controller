@@ -12,7 +12,7 @@ from app.services.network_service import NetworkService
 from app.services.profile_service import ProfileService
 from app.services.recording_service import RecordingService
 from app.ui.camera_row import CameraRow
-from app.ui.theme import TEXT_DIM, use_font
+from app.ui.theme import caption, secondary_text
 
 
 class CameraSidebar:
@@ -30,17 +30,16 @@ class CameraSidebar:
         self.selected: str | None = None
         self.rows: dict[str, CameraRow] = {}
 
-        title = dpg.add_text("CAMERAS", color=TEXT_DIM, parent=parent)
-        use_font(title, "heading")
-        dpg.add_spacer(height=2, parent=parent)
+        with dpg.group(horizontal=True, parent=parent):
+            caption("Cameras")
+            self._count = secondary_text(str(len(manager.camera_ids)))
         if not manager.camera_ids:
-            dpg.add_text("No cameras discovered", color=TEXT_DIM, parent=parent)
+            secondary_text("No cameras discovered", parent=parent)
         for status in statuses.statuses():
             self.rows[status.camera_id] = CameraRow(
                 parent, status, manager, statuses, recording, profiles, network,
                 on_select=self.select, on_property_grid=on_property_grid,
             )
-            dpg.add_spacer(height=2, parent=parent)
 
         if self.rows:
             self.select(next(iter(self.rows)))

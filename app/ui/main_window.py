@@ -23,16 +23,18 @@ from app.ui.performance_window import PerformanceWindow
 from app.ui.property_grid import PropertyGridWindow
 from app.ui.settings_window import SettingsWindow
 from app.ui.status_panel import StatusPanel
-from app.ui.theme import STATE_COLORS, TEXT_DIM, create_theme, load_fonts, square_window_theme, use_font
+from app.ui import theme
+from app.ui.theme import ACCENTS, COLORS, THEME_TEXT, bind, load_fonts, secondary_text, use_font
 from app.ui.status_bar import format_recording_status
 
 logger = logging.getLogger(__name__)
 
 APP_TITLE = "LUCID Camera Studio"
-SIDEBAR_WIDTH = 380  # fits Model (Serial) + IP on one line
-HEADER_HEIGHT = 40
+SIDEBAR_WIDTH = 392  # fits Model (Serial) + IP on one line
+HEADER_HEIGHT = 46
 STATUS_HEIGHT = 30
-SPACING = 6  # matches mvStyleVar_ItemSpacing y in theme.py
+SPACING = 8  # matches mvStyleVar_ItemSpacing y in theme.py
+THEME_LABELS = {"dark": "Dark", "light": "Light"}
 
 
 class MainWindow:
@@ -59,9 +61,21 @@ class MainWindow:
                     dpg.add_menu_item(label="Exit", callback=lambda: dpg.stop_dearpygui())
                 with dpg.menu(label="View"):
                     dpg.add_menu_item(label="Performance", callback=lambda: self._performance.toggle())
+                    dpg.add_separator()
                     with dpg.menu(label="Theme"):
-                        dpg.add_menu_item(label="Dark", callback=lambda: self.set_theme("dark", persist=True))
-                        dpg.add_menu_item(label="Light", callback=lambda: self.set_theme("light", persist=True))
+                        self._theme_items = {
+                            name: dpg.add_menu_item(label=label, check=True,
+                                                    callback=lambda _s, _a, n: self.set_theme(n, persist=True),
+                                                    user_data=name)
+                            for name, label in THEME_LABELS.items()
+                        }
+                    with dpg.menu(label="Accent colour"):
+                        self._accent_items = {
+                            name: dpg.add_menu_item(label=name, check=True,
+                                                    callback=lambda _s, _a, n: self.set_accent(n, persist=True),
+                                                    user_data=name)
+                            for name in ACCENTS
+                        }
                 with dpg.menu(label="Cameras"):
                     self._reconnect_item = dpg.add_menu_item(
                         label="Auto-reconnect",
@@ -70,15 +84,34 @@ class MainWindow:
                         callback=lambda _s, value: self._set_reconnect(value),
                     )
 
-            with dpg.child_window(height=HEADER_HEIGHT, border=False, no_scrollbar=True):
-                with dpg.group(horizontal=True):
-                    app_title = dpg.add_text(APP_TITLE)
-                    use_font(app_title, "heading")
-                    dpg.add_spacer(width=24)
-                    self._header_status = dpg.add_text("", color=TEXT_DIM)
+            # Toolbar: title and live summary pills on the left, layout picker on the right.
+            with dpg.child_window(height=HEADER_HEIGHT, no_scrollbar=True, no_scroll_with_mouse=True) as header:
+                with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit, borders_innerH=False,
+                               borders_outerH=False, borders_innerV=False, borders_outerV=False) as header_table:
+                    dpg.add_table_column(width_stretch=True)
+                    dpg.add_table_column(width_fixed=True)
+                    with dpg.table_row():
+                        with dpg.group(horizontal=True, horizontal_spacing=16):
+                            app_title = dpg.add_text(APP_TITLE)
+                            with theme.nudge(3):
+                                with dpg.group(horizontal=True, horizontal_spacing=8):
+                                    self._live_pill = dpg.add_button(label="", height=24)
+                                    self._rec_pill = dpg.add_button(label="", height=24, show=False)
+                                    self._error_pill = dpg.add_button(label="", height=24, show=False)
+                        with dpg.group(horizontal=True, horizontal_spacing=10):
+                            with theme.nudge(1):
+                                layout_caption = secondary_text("Layout")
+                            self._layout_slot = dpg.add_group()
+            bind(header, "canvas")
+            bind(header_table, "tight")
+            use_font(app_title, "title")
+            use_font(layout_caption, "small")
+            for pill in (self._live_pill, self._rec_pill, self._error_pill):
+                use_font(pill, "caption")
+            self._pill_roles: dict[int | str, str] = {}
 
-            with dpg.group(horizontal=True):
-                with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8) as sidebar:
+            with dpg.group(horizontal=True, horizontal_spacing=12):
+                with dpg.child_window(width=SIDEBAR_WIDTH, height=-STATUS_HEIGHT - 8, border=True) as sidebar:
                     self._sidebar_window = sidebar
                     self._sidebar = CameraSidebar(
                         sidebar, self._manager, services.statuses, services.recording, services.profiles,
@@ -89,6 +122,9 @@ class MainWindow:
                     self._multiview = MultiView(
                         area, self._manager, app_cfg["default_layout"], services.recording, services.reconnect
                     )
+            bind(sidebar, "surface")
+            bind(area, "canvas")
+            self._multiview.build_layout_control(self._layout_slot)
 
             # Collapsible sections below the multiview; the stream area takes whatever they free up.
             self._status_panel = StatusPanel(
@@ -100,14 +136,27 @@ class MainWindow:
                 camera_names=lambda: {st.camera_id: st.display_name for st in services.statuses.statuses()},
             )
 
-            with dpg.child_window(height=STATUS_HEIGHT, border=False, no_scrollbar=True):
-                self._status = dpg.add_text("", color=TEXT_DIM)
+            with dpg.child_window(height=STATUS_HEIGHT, border=True, no_scrollbar=True,
+                                  no_scroll_with_mouse=True) as status_bar:
+                with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit, borders_innerH=False,
+                               borders_outerH=False, borders_innerV=False, borders_outerV=False) as status_table:
+                    dpg.add_table_column(width_stretch=True)
+                    dpg.add_table_column(width_fixed=True)
+                    with dpg.table_row():
+                        self._status = secondary_text("")
+                        self._status_rec = secondary_text("")
+            bind(status_bar, "bar")
+            bind(status_table, "tight")
+            use_font(self._status, "small")
+            use_font(self._status_rec, "small")
+            self._status_rec_active: bool | None = None
 
         self._property_grids: dict[str, PropertyGridWindow] = {}
         self._performance = PerformanceWindow(services.performance, self._multiview.display_fps, lambda: self._ui_fps)
-        self._settings = SettingsWindow(services, on_theme=self.set_theme)
-        self.set_theme(app_cfg["theme"])
-        dpg.bind_item_theme("main_window", square_window_theme())
+        self._settings = SettingsWindow(services, on_theme=self.set_theme, on_accent=self.set_accent)
+        self._theme_name = app_cfg["theme"]
+        self.set_accent(app_cfg.get("accent", theme.DEFAULT_ACCENT))
+        bind("main_window", "square_window")
         dpg.set_primary_window("main_window", True)
 
     # --- per frame ------------------------------------------------------------
@@ -131,21 +180,33 @@ class MainWindow:
         errors = states.count(CameraState.ERROR)
         total_fps = sum(s.measured_fps for cid in camera_ids if (s := self._manager.stats(cid)) is not None)
 
-        if errors:
-            header_state = CameraState.ERROR
-        elif streaming:
-            header_state = CameraState.ACQUIRING
-        else:
-            header_state = CameraState.DISCONNECTED
-        dpg.set_value(self._header_status, f"● {streaming}/{len(camera_ids)} streaming")
-        dpg.configure_item(self._header_status, color=STATE_COLORS[header_state])
+        recording = len(recording_status.cameras) if recording_status.active else 0
+        self._set_pill(self._live_pill, f"\u25cf  {streaming} of {len(camera_ids)} live",
+                       "pill_success" if streaming else "pill_neutral")
+        self._set_pill(self._rec_pill, f"\u25cf  REC {recording}", "pill_rec", show=bool(recording))
+        self._set_pill(self._error_pill, f"{errors} error{'s' if errors != 1 else ''}", "pill_error", show=bool(errors))
 
-        error_text = f" | {errors} error(s)" if errors else ""
+        sep = "   \u00b7   "
         dpg.set_value(
             self._status,
-            f"{len(camera_ids)} Cameras | {streaming} streaming | {total_fps:.1f} FPS"
-            f"{error_text} | Layout {self._multiview.layout} | {format_recording_status(recording_status)}",
+            f"{len(camera_ids)} camera{'s' if len(camera_ids) != 1 else ''}{sep}{streaming} live{sep}"
+            f"{total_fps:.1f} FPS total{sep}Layout {self._multiview.layout.replace('x', ' \u00d7 ')}"
+            f"{sep}UI {self._ui_fps:.0f} FPS",
         )
+        dpg.set_value(self._status_rec, format_recording_status(recording_status).replace(" | ", sep))
+        active = recording_status.active or bool(recording_status.error)
+        if active != self._status_rec_active:
+            self._status_rec_active = active
+            dpg.configure_item(self._status_rec, color=COLORS["error"] if active else THEME_TEXT)
+
+    def _set_pill(self, pill, label: str, role_name: str, show: bool = True) -> None:
+        if dpg.get_item_label(pill) != label:
+            dpg.configure_item(pill, label=label)
+        if dpg.is_item_shown(pill) != show:
+            dpg.configure_item(pill, show=show)
+        if self._pill_roles.get(pill) != role_name:
+            self._pill_roles[pill] = role_name
+            bind(pill, role_name)
 
     def _fit_main_area(self) -> None:
         """Give the sidebar/multiview row all height not used by the sections below it."""
@@ -165,12 +226,27 @@ class MainWindow:
 
     # --- actions --------------------------------------------------------------
     def set_theme(self, name: str, persist: bool = False) -> None:
-        dpg.bind_theme(create_theme(name))
-        if hasattr(self, "_log_panel"):
-            self._log_panel.set_theme(name)
+        self._theme_name = name
+        theme.apply(name, theme.current_accent())
+        self._after_theme_change()
         if persist:
             self._services.config["application"]["theme"] = name
             self._persist_config()
+
+    def set_accent(self, accent: str, persist: bool = False) -> None:
+        theme.apply(self._theme_name, accent)
+        self._after_theme_change()
+        if persist:
+            self._services.config["application"]["accent"] = accent
+            self._persist_config()
+
+    def _after_theme_change(self) -> None:
+        for name, item in self._theme_items.items():
+            dpg.set_value(item, name == theme.current_theme())
+        for name, item in self._accent_items.items():
+            dpg.set_value(item, name == theme.current_accent())
+        self._log_panel.set_theme(theme.current_theme())
+        self._status_rec_active = None  # recolour on the next update
 
     def _set_reconnect(self, enabled: bool) -> None:
         self._services.reconnect.enabled = enabled
@@ -229,7 +305,7 @@ class MainWindow:
             self._services.features,
             on_close=lambda cid: self._property_grids.pop(cid, None),
             state_of=self._manager.state,
-            pos=(SIDEBAR_WIDTH + 40 + offset, 90 + offset),
+            pos=(SIDEBAR_WIDTH + 48 + offset, 100 + offset),
         )
 
     def _export_diagnostics(self) -> None:

@@ -1,4 +1,8 @@
-"""Grid of CameraView tiles with selectable layouts."""
+"""Grid of CameraView tiles with selectable layouts.
+
+The layout picker is a segmented control that the main window places in its toolbar
+(``build_layout_control``), so the tiles get the full height of the stream area.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ from app.cameras.camera_manager import CameraManager
 from app.services.reconnect_service import ReconnectService
 from app.services.recording_service import RecordingService
 from app.ui.camera_view import CameraView
-from app.ui.theme import TEXT_DIM
+from app.ui.theme import SegmentedControl, bind
 
 # name -> (columns, rows)
 LAYOUTS: dict[str, tuple[int, int]] = {
@@ -18,7 +22,11 @@ LAYOUTS: dict[str, tuple[int, int]] = {
     "3x3": (3, 3),
     "4x4": (4, 4),
 }
-TILE_SPACING = 6
+TILE_SPACING = 8
+
+
+def layout_label(layout: str) -> str:
+    return layout.replace("x", " × ")
 
 
 class MultiView:
@@ -38,18 +46,17 @@ class MultiView:
         self._grid_size = (0, 0)
         self._layout = layout if layout in LAYOUTS else "2x2"
         self._texture_registry = dpg.add_texture_registry()
-
-        with dpg.group(horizontal=True, parent=parent):
-            dpg.add_text("MULTIVIEW", color=TEXT_DIM)
-            dpg.add_spacer(width=12)
-            self._layout_combo = dpg.add_combo(
-                list(LAYOUTS),
-                default_value=self._layout,
-                width=80,
-                callback=lambda _s, value: self.set_layout(value),
-            )
-        self._grid = dpg.add_child_window(parent=parent, border=False, no_scrollbar=True)
+        self._control: SegmentedControl | None = None
+        self._grid = dpg.add_child_window(parent=parent, border=False, no_scrollbar=True, no_scroll_with_mouse=True)
+        bind(self._grid, "canvas")
         self._build()
+
+    def build_layout_control(self, parent: int | str) -> SegmentedControl:
+        """Segmented layout picker (1 × 1 … 4 × 4), placed by the caller."""
+        labels = {layout_label(name): name for name in LAYOUTS}
+        self._control = SegmentedControl(parent, list(labels), layout_label(self._layout),
+                                         lambda label: self.set_layout(labels[label]), segment_width=58)
+        return self._control
 
     @property
     def layout(self) -> str:
@@ -59,7 +66,8 @@ class MultiView:
         if layout == self._layout or layout not in LAYOUTS:
             return
         self._layout = layout
-        dpg.set_value(self._layout_combo, layout)
+        if self._control is not None:
+            self._control.set(layout_label(layout))
         self._build()
 
     def display_fps(self, camera_id: str) -> float:

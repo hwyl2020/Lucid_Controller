@@ -15,31 +15,28 @@ from collections.abc import Callable
 
 import dearpygui.dearpygui as dpg
 
-from app.models.camera_state import CameraState
 from app.services.log_buffer import LogBuffer, LogEntry
-from app.ui.theme import (
-    STATE_COLORS,
-    TEXT_DIM,
-    THEME_TEXT,
-    WARNING_COLOR,
-    compact_table_theme,
-    segment_selected_theme,
-    use_font,
-)
+from app.ui import theme as ui_theme
+from app.ui.theme import COLORS, THEME_TEXT, SegmentedControl, bind, secondary_text, use_font
 
 MAX_ROWS = 1000
-PANEL_HEIGHT = 170
+PANEL_HEIGHT = 180
 FILTERS = ("All", "Debug", "Info", "Warning", "Error")
 ALL_CAMERAS = "All cameras"
 SYSTEM = "System (no camera)"
-CAMERA_COLUMN_WIDTH = 190
-LEVEL_COLORS = {
-    logging.DEBUG: TEXT_DIM,
-    logging.INFO: THEME_TEXT,
-    logging.WARNING: WARNING_COLOR,
-    logging.ERROR: STATE_COLORS[CameraState.ERROR],
-    logging.CRITICAL: STATE_COLORS[CameraState.ERROR],
+CAMERA_COLUMN_WIDTH = 200
+LEVEL_TOKENS = {
+    logging.DEBUG: "text_tertiary",
+    logging.INFO: "accent_text",
+    logging.WARNING: "warning",
+    logging.ERROR: "error",
+    logging.CRITICAL: "error",
 }
+
+
+def level_color(levelno: int) -> tuple:
+    """Current-theme colour for a log level badge."""
+    return COLORS[LEVEL_TOKENS.get(levelno, "text_secondary")]
 
 
 def matches(entry: LogEntry, level_filter: str) -> bool:
@@ -80,37 +77,33 @@ class LogPanel:
         self._rows: list[int | str] = []
         self._dirty = True  # rebuild from the buffer (first show, filter change, reopened)
         self._level_filter = "All"
-        self._segment_theme = segment_selected_theme(theme)
-        self._segments: dict[str, int | str] = {}
+        self._revision = ui_theme.revision()
 
         with dpg.group(parent=parent) as self.group:
             self.header = dpg.add_collapsing_header(label="Logs", default_open=default_open)
             use_font(self.header, "heading")
             with dpg.group(horizontal=True, parent=self.header):
-                with dpg.group(horizontal=True, horizontal_spacing=2):  # segmented control
-                    for name in FILTERS:
-                        self._segments[name] = dpg.add_button(
-                            label=name, width=72, callback=lambda _s, _a, n: self.set_filter(n), user_data=name
-                        )
-                dpg.add_spacer(width=12)
-                self._camera_combo = dpg.add_combo([ALL_CAMERAS, SYSTEM], default_value=ALL_CAMERAS, width=230,
+                self._levels = SegmentedControl(None, FILTERS, self._level_filter, self.set_filter, segment_width=70)
+                dpg.add_spacer(width=4)
+                self._camera_combo = dpg.add_combo([ALL_CAMERAS, SYSTEM], default_value=ALL_CAMERAS, width=240,
                                                    callback=lambda _s, label: self._on_camera_filter(label))
-                dpg.add_spacer(width=12)
+                dpg.add_spacer(width=4)
                 self._autoscroll = dpg.add_checkbox(label="Auto-scroll", default_value=True)
                 dpg.add_spacer(width=4)
-                dpg.add_button(label="Clear", width=70, callback=self.clear)
-                dpg.add_spacer(width=8)
-                self._count = dpg.add_text("", color=TEXT_DIM)
-            self._hint = dpg.add_text("", color=TEXT_DIM, parent=self.header, show=False)
+                dpg.add_button(label="Clear", width=72, callback=self.clear)
+                dpg.add_spacer(width=4)
+                self._count = secondary_text("")
+            self._hint = dpg.add_text("", color=COLORS["warning"], parent=self.header, show=False)
             with dpg.child_window(parent=self.header, height=PANEL_HEIGHT, border=True) as self._body:
                 with dpg.table(header_row=False, clipper=True, row_background=True,
                                borders_innerH=False, borders_outerH=False, borders_innerV=False,
                                borders_outerV=False, policy=dpg.mvTable_SizingFixedFit) as self._table:
-                    dpg.add_table_column(width_fixed=True, init_width_or_weight=78)
-                    dpg.add_table_column(width_fixed=True, init_width_or_weight=78)
+                    dpg.add_table_column(width_fixed=True, init_width_or_weight=72)
+                    dpg.add_table_column(width_fixed=True, init_width_or_weight=70)
                     dpg.add_table_column(width_fixed=True, init_width_or_weight=CAMERA_COLUMN_WIDTH)
                     dpg.add_table_column(width_stretch=True)
-            dpg.bind_item_theme(self._table, compact_table_theme())
+            bind(self._body, "surface")
+            bind(self._table, "compact_table")
         self._was_open = self.is_open
         self._show_selected_segment()
 
@@ -154,13 +147,13 @@ class LogPanel:
             self._names = names
             dpg.configure_item(self._camera_combo, items=[ALL_CAMERAS, SYSTEM, *names.values()])
 
-    def set_theme(self, theme: str) -> None:
-        self._segment_theme = segment_selected_theme(theme)
-        self._show_selected_segment()
+    def set_theme(self, theme_name: str) -> None:
+        """Row colours are baked into the rows: rebuild them in the new palette."""
+        self._mark_dirty()
 
     def _show_selected_segment(self) -> None:
-        for name, button in self._segments.items():
-            dpg.bind_item_theme(button, self._segment_theme if name == self._level_filter else 0)
+        if hasattr(self, "_levels"):
+            self._levels.set(self._level_filter)
 
     @property
     def row_count(self) -> int:
@@ -178,6 +171,9 @@ class LogPanel:
         self._was_open = is_open
         if not is_open:
             return
+        if ui_theme.revision() != self._revision:
+            self._revision = ui_theme.revision()
+            self._dirty = True
         if dpg.get_value(self._autoscroll):
             # Pin to the bottom every frame: scroll max only updates after rows are rendered, so a
             # one-shot scroll can land short (e.g. right after a filter rebuild).
@@ -212,17 +208,17 @@ class LogPanel:
         self._update_count()
 
     def _add_row(self, entry: LogEntry) -> None:
-        color = LEVEL_COLORS.get(entry.levelno, THEME_TEXT)
+        color = level_color(entry.levelno)
+        error = entry.levelno >= logging.ERROR
         with dpg.table_row(parent=self._table) as row:
             stamp = time.strftime("%H:%M:%S", time.localtime(entry.timestamp))
             camera = self._names.get(entry.camera_id, entry.camera_id) if entry.camera_id else "System"
-            for text, text_color, font in ((stamp, TEXT_DIM, "mono"), (entry.level, color, "mono"),
-                                           (camera, THEME_TEXT if entry.camera_id else TEXT_DIM, "body"),
-                                           (entry.message, THEME_TEXT, "mono")):
+            for text, text_color, font in ((stamp, COLORS["text_tertiary"], "mono"),
+                                           (entry.level, color, "caption"),
+                                           (camera, THEME_TEXT if entry.camera_id else COLORS["text_secondary"], "small"),
+                                           (entry.message, color if error else THEME_TEXT, "mono")):
                 item = dpg.add_text(text, color=text_color)
                 use_font(item, font)
-            if entry.levelno >= logging.ERROR:
-                dpg.configure_item(item, color=color)
         self._rows.append(row)
 
     def _delete_rows(self) -> None:
@@ -233,7 +229,7 @@ class LogPanel:
         self._dirty = True
 
     def _update_count(self) -> None:
-        dpg.set_value(self._count, f"{len(self._rows):,} shown")
+        dpg.set_value(self._count, f"{len(self._rows):,} entries")
 
     def _update_hint(self, level_filter: str) -> None:
         capture = logging.getLogger().getEffectiveLevel()

@@ -1,54 +1,90 @@
-"""Settings window: edits config.json and applies changes live where possible."""
+"""Settings window: edits config.json and applies changes live where possible.
+
+Grouped form: each section is a caption over a card of label/control rows.
+"""
 
 from __future__ import annotations
 
 import copy
 import logging
 from collections.abc import Callable
+from contextlib import contextmanager
 
 import dearpygui.dearpygui as dpg
 
-from app.models.camera_state import CameraState
 from app.recording.recorder import RecordingMode
 from app.services.app_services import AppServices
 from app.services.configuration import save_config
 from app.ui.multiview import LAYOUTS
-from app.ui.theme import STATE_COLORS, TEXT_DIM
+from app.ui.theme import ACCENTS, COLORS, DEFAULT_ACCENT, bind, caption, nudge, secondary_text, use_font
 
 logger = logging.getLogger(__name__)
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+LABEL_WIDTH = 190
+FIELD_WIDTH = 300
 
 
 class SettingsWindow:
-    def __init__(self, services: AppServices, on_theme: Callable[[str], None]) -> None:
+    def __init__(self, services: AppServices, on_theme: Callable[[str], None],
+                 on_accent: Callable[[str], None] | None = None) -> None:
         self._services = services
         self._on_theme = on_theme
-        with dpg.window(label="Settings", width=520, height=560, show=False, pos=(300, 80), no_collapse=True) as self.window:
-            dpg.add_text("APPEARANCE", color=TEXT_DIM)
-            self._theme = dpg.add_combo(["dark", "light"], label="Theme", width=200)
-            self._layout = dpg.add_combo(list(LAYOUTS), label="Default layout", width=200)
-            dpg.add_spacer(height=6)
-            dpg.add_text("RECORDING", color=TEXT_DIM)
-            self._rec_dir = dpg.add_input_text(label="Recordings folder", width=300)
-            self._rec_mode = dpg.add_combo([m.value for m in RecordingMode], label="Default mode", width=200)
-            self._queue = dpg.add_input_int(label="Queue (frames/camera)", width=200, min_value=4, min_clamped=True)
-            self._min_free = dpg.add_input_float(label="Stop below free GB", width=200, min_value=0, min_clamped=True, format="%.1f")
-            self._snap_dir = dpg.add_input_text(label="Snapshots folder", width=300)
-            dpg.add_spacer(height=6)
-            dpg.add_text("CAMERAS & LOGGING", color=TEXT_DIM)
-            self._reconnect = dpg.add_checkbox(label="Automatically reconnect lost cameras")
-            self._log_level = dpg.add_combo(LOG_LEVELS, label="Log level", width=200)
-            dpg.add_spacer(height=10)
+        self._on_accent = on_accent
+        with dpg.window(label="Settings", width=580, autosize=True, show=False, pos=(300, 70), no_collapse=True) as self.window:
+            with self._section("Appearance"):
+                self._theme = self._row("Theme", lambda: dpg.add_combo(["dark", "light"], width=FIELD_WIDTH))
+                self._accent = self._row("Accent colour", lambda: dpg.add_combo(list(ACCENTS), width=FIELD_WIDTH))
+                self._layout = self._row("Default layout", lambda: dpg.add_combo(list(LAYOUTS), width=FIELD_WIDTH))
+            with self._section("Recording"):
+                self._rec_dir = self._row("Recordings folder", lambda: dpg.add_input_text(width=FIELD_WIDTH))
+                self._rec_mode = self._row("Default mode", lambda: dpg.add_combo([m.value for m in RecordingMode],
+                                                                                  width=FIELD_WIDTH))
+                self._queue = self._row("Queue (frames/camera)", lambda: dpg.add_input_int(
+                    width=FIELD_WIDTH, min_value=4, min_clamped=True))
+                self._min_free = self._row("Stop below free GB", lambda: dpg.add_input_float(
+                    width=FIELD_WIDTH, min_value=0, min_clamped=True, format="%.1f"))
+                self._snap_dir = self._row("Snapshots folder", lambda: dpg.add_input_text(width=FIELD_WIDTH))
+            with self._section("Cameras & logging"):
+                self._reconnect = self._row("Auto-reconnect", lambda: dpg.add_checkbox(label="Reconnect lost cameras"))
+                self._log_level = self._row("Log level", lambda: dpg.add_combo(LOG_LEVELS, width=FIELD_WIDTH))
+            dpg.add_spacer(height=4)
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Save", width=90, callback=self._save)
-                dpg.add_button(label="Close", width=90, callback=lambda: dpg.hide_item(self.window))
-            self._message = dpg.add_text("", wrap=490)
-            dpg.add_text(f"Saved to {services.config_path}", color=TEXT_DIM, wrap=490)
+                save = dpg.add_button(label="Save", width=96, callback=self._save)
+                dpg.add_button(label="Close", width=96, callback=lambda: dpg.hide_item(self.window))
+                self._message = dpg.add_text("")
+            bind(save, "primary")
+            path = secondary_text(f"Saved to {services.config_path}", wrap=530)
+            use_font(path, "small")
 
+    # --- form helpers ------------------------------------------------------------
+    @staticmethod
+    @contextmanager
+    def _section(title: str):
+        """Caption over a card holding a two-column (label | control) table."""
+        caption(title)
+        with dpg.child_window(auto_resize_y=True, no_scrollbar=True, border=True) as card:
+            with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit, borders_innerH=True,
+                           borders_outerH=False, borders_innerV=False, borders_outerV=False) as table:
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=LABEL_WIDTH)
+                dpg.add_table_column(width_stretch=True)
+                yield
+        bind(card, "surface")
+        bind(table, "compact_table")
+        dpg.add_spacer(height=4)
+
+    @staticmethod
+    def _row(label: str, make):
+        with dpg.table_row():
+            with nudge(0):
+                dpg.add_text(label)
+            return make()
+
+    # --- behaviour ----------------------------------------------------------------
     def show(self) -> None:
         cfg = self._services.config
         dpg.set_value(self._theme, cfg["application"]["theme"])
+        dpg.set_value(self._accent, cfg["application"].get("accent", DEFAULT_ACCENT))
         dpg.set_value(self._layout, cfg["application"]["default_layout"])
         dpg.set_value(self._rec_dir, cfg["recording"]["directory"])
         dpg.set_value(self._rec_mode, cfg["recording"]["mode"])
@@ -65,6 +101,7 @@ class SettingsWindow:
         services = self._services
         new = copy.deepcopy(services.config)
         new["application"]["theme"] = dpg.get_value(self._theme)
+        new["application"]["accent"] = dpg.get_value(self._accent) or DEFAULT_ACCENT
         new["application"]["default_layout"] = dpg.get_value(self._layout)
         new["recording"]["directory"] = dpg.get_value(self._rec_dir).strip() or "recordings"
         new["recording"]["mode"] = dpg.get_value(self._rec_mode)
@@ -83,6 +120,8 @@ class SettingsWindow:
         services.config.update(new)
 
         self._on_theme(new["application"]["theme"])
+        if self._on_accent is not None:
+            self._on_accent(new["application"]["accent"])
         logging.getLogger().setLevel(new["logging"]["level"])
         services.reconnect.enabled = new["reconnect"]["enabled"]
         if services.recording.active:
@@ -95,4 +134,4 @@ class SettingsWindow:
 
     def _show(self, text: str, error: bool = False) -> None:
         dpg.set_value(self._message, text)
-        dpg.configure_item(self._message, color=STATE_COLORS[CameraState.ERROR] if error else STATE_COLORS[CameraState.ACQUIRING])
+        dpg.configure_item(self._message, color=COLORS["error"] if error else COLORS["success"])

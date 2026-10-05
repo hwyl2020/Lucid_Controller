@@ -1,8 +1,8 @@
-"""One camera in the sidebar list: header line plus its own expandable control panel.
+"""One camera in the sidebar list: a card with a header line plus its own expandable control panel.
 
 Header:  [disclosure] [state dot] Model (Serial)  IP  [···]
-Panel (this camera only): camera power toggle + stream button, video recording (format + record),
-image capture (format + capture), Property Grid button and live statistics.
+Panel (this camera only): power switch + stream button, video recording (format + record),
+image capture (format + capture), live statistics and the Property Grid button.
 
 Power and streaming are separate on purpose: with the camera ON but not streaming, settings that the
 camera locks during acquisition (pixel format, ROI, ...) can be changed in the Property Grid.
@@ -32,45 +32,34 @@ from app.services.network_service import NetworkService
 from app.services.profile_service import ProfileService
 from app.services.recording_service import RecordingError, RecordingService
 from app.ui import dialogs
-from app.ui.theme import STATE_COLORS, TEXT_DIM, compact_table_theme, plain_button_theme, use_font
+from app.ui import theme
+from app.ui.theme import COLORS, STATE_COLORS, STATE_NAMES, THEME_TEXT, bind, caption, secondary_text, use_font
+from app.ui.widgets import Switch
 from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
-NAME_WIDTH = 190
-CONTROL_WIDTH = 118
-POWER_WIDTH = 78
-STREAM_WIDTH = 36
-PLAY, STOP = "\u25ba", "\u25a0"  # Segoe UI has U+25BA/U+25A0 (not U+25B6)
-PENDING_LABELS = {"check": "Checking\u2026", "close": "Closing\u2026", "force": "Forcing IP\u2026",
-                  "start": "\u2026", "stop": "\u2026"}
-WARNING_COLOR = (255, 159, 10)
+SUBTITLE_INDENT = 34  # aligns the IP / state line under the camera name
+MENU_WIDTH = 28
+CONTROL_WIDTH = 150
+STREAM_WIDTH = 104
+PLAY, STOP = "►", "■"  # Segoe UI has U+25BA/U+25A0 (not U+25B6)
+STREAM_LABELS = {False: f"{PLAY}  Start", True: f"{STOP}  Stop"}
+PENDING_LABELS = {"check": "Checking…", "close": "Closing…", "force": "Forcing IP…",
+                  "start": "Starting…", "stop": "Stopping…"}
 PANEL_TEXT_WRAP = 300
 DETAILS_REFRESH_S = 0.2
-ERROR_COLOR = STATE_COLORS[CameraState.ERROR]
+DASH = "—"
 VIDEO_FORMATS = {mode.label: mode for mode in RecordingMode}
 IMAGE_FORMAT_LABELS = {label: key for key, (_ext, label) in IMAGE_FORMATS.items()}
 
 
-def _toggle_themes() -> tuple[int, int, int]:
-    """(on, off, recording) button themes."""
-    green, red = STATE_COLORS[CameraState.ACQUIRING], STATE_COLORS[CameraState.ERROR]
-    themes = []
-    for fill, text in (((*green, 60), green), ((128, 128, 128, 40), TEXT_DIM), ((*red, 70), (255, 255, 255))):
-        with dpg.theme() as theme:
-            with dpg.theme_component(dpg.mvButton):
-                dpg.add_theme_color(dpg.mvThemeCol_Button, fill)
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, fill)
-                dpg.add_theme_color(dpg.mvThemeCol_Text, text)
-        themes.append(theme)
-    return tuple(themes)
+def _borderless_table(**kwargs) -> int | str:
+    return dpg.table(header_row=False, borders_innerH=False, borders_outerH=False, borders_innerV=False,
+                     borders_outerV=False, **kwargs)
 
 
 class CameraRow:
-    _themes: tuple[int, int, int] | None = None
-    _plain: int | None = None
-    _compact: int | None = None
-
     def __init__(
         self,
         parent: int | str,
@@ -95,75 +84,106 @@ class CameraRow:
         self._on_select = on_select
         self._on_property_grid = on_property_grid
         self.expanded = False
+        self.selected = False
         self._pending: str | None = None  # "open" / "close" / "start" / "stop" while a worker is busy
         self._last_details = 0.0
-        if CameraRow._themes is None or not dpg.does_item_exist(CameraRow._themes[0]):
-            CameraRow._themes = _toggle_themes()
-            CameraRow._plain = plain_button_theme()
-            CameraRow._compact = compact_table_theme()
+        self._bound: dict[int | str, str | None] = {}  # item -> bound role (rebind only on change)
+        self._dot_key: tuple | None = None
 
-        with dpg.group(horizontal=True, horizontal_spacing=4, parent=parent) as self.header:
-            self.arrow = dpg.add_button(arrow=True, direction=dpg.mvDir_Right, callback=self.toggle_expanded)
-            self.dot = dpg.add_text("●")
-            self.name = dpg.add_selectable(label=status.display_name, width=NAME_WIDTH,
-                                           callback=lambda: self._on_select(self.camera_id))
-            self.ip = dpg.add_text(status.ip_address or "No IP", color=TEXT_DIM)
-            self.menu_button = dpg.add_button(label="···", width=24)  # U+22EE is missing from Segoe UI
-        for button in (self.arrow, self.menu_button):
-            dpg.bind_item_theme(button, CameraRow._plain)
-        with dpg.tooltip(self.name):
-            dpg.add_text(f"{status.display_name}\nCamera ID: {self.camera_id}")
-        with dpg.popup(self.menu_button, mousebutton=dpg.mvMouseButton_Left):
-            dpg.add_menu_item(label="Property Grid\u2026", callback=lambda: self._on_property_grid(self.camera_id))
-            dpg.add_menu_item(label="Turn camera on / off", callback=self.toggle_power)
-            dpg.add_menu_item(label="Start / stop streaming", callback=self.toggle_stream)
-            dpg.add_menu_item(label="Capture image", callback=self.capture)
-            dpg.add_separator()
-            dpg.add_menu_item(label="Save settings as profile\u2026", callback=self._save_profile)
-            dpg.add_menu_item(label="Apply profile\u2026", callback=self._apply_profile)
-            dpg.add_separator()
-            dpg.add_menu_item(label="Show controls", callback=lambda: self.set_expanded(True))
-
-        with dpg.child_window(parent=parent, auto_resize_y=True, border=True, show=False) as self.panel:
-            with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit, borders_innerH=False,
-                           borders_outerH=False, borders_innerV=False, borders_outerV=False) as table:
+        with dpg.child_window(parent=parent, auto_resize_y=True, no_scrollbar=True) as self.card:
+            with _borderless_table(policy=dpg.mvTable_SizingFixedFit) as header:
                 dpg.add_table_column(width_stretch=True)
-                dpg.add_table_column(width_fixed=True, init_width_or_weight=POWER_WIDTH + STREAM_WIDTH + 8)
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=MENU_WIDTH)
                 with dpg.table_row():
-                    title = dpg.add_text("Camera")
-                    with dpg.group(horizontal=True, horizontal_spacing=8):
-                        self.power_button = dpg.add_button(label="OFF", width=POWER_WIDTH, callback=self.toggle_power)
-                        self.stream_button = dpg.add_button(label=PLAY, width=STREAM_WIDTH, callback=self.toggle_stream)
-                use_font(title, "heading")
+                    with dpg.group(horizontal=True, horizontal_spacing=6) as self.header:
+                        self.arrow = dpg.add_button(arrow=True, direction=dpg.mvDir_Right,
+                                                    callback=self.toggle_expanded)
+                        self.dot = dpg.add_text("●")
+                        self.name = dpg.add_selectable(label=status.display_name, width=0,
+                                                       callback=lambda: self._on_select(self.camera_id))
+                    self.menu_button = dpg.add_button(label="···", width=MENU_WIDTH)  # no U+22EE
+                with dpg.table_row():
+                    with dpg.group(horizontal=True, horizontal_spacing=6):
+                        dpg.add_spacer(width=SUBTITLE_INDENT)
+                        self.ip = secondary_text(status.ip_address or "No IP")
+                        sep = secondary_text("·")
+                        self.state_text = secondary_text("")
+                    dpg.add_spacer(width=1)
+            bind(header, "tight")
+            use_font(self.name, "heading")
+            for item in (self.ip, sep, self.state_text):
+                use_font(item, "small")
+            use_font(self.dot, "caption")
+            bind(self.arrow, "ghost")
+            bind(self.menu_button, "ghost")
+            bind(self.name, "quiet_selectable")
+            with dpg.tooltip(self.name):
+                dpg.add_text(f"{status.display_name}\nCamera ID: {self.camera_id}")
+            with dpg.popup(self.menu_button, mousebutton=dpg.mvMouseButton_Left):
+                dpg.add_menu_item(label="Property Grid…", callback=lambda: self._on_property_grid(self.camera_id))
+                dpg.add_menu_item(label="Turn camera on / off", callback=self.toggle_power)
+                dpg.add_menu_item(label="Start / stop streaming", callback=self.toggle_stream)
+                dpg.add_menu_item(label="Capture image", callback=self.capture)
+                dpg.add_separator()
+                dpg.add_menu_item(label="Save settings as profile…", callback=self._save_profile)
+                dpg.add_menu_item(label="Apply profile…", callback=self._apply_profile)
+                dpg.add_separator()
+                dpg.add_menu_item(label="Show controls", callback=lambda: self.set_expanded(True))
+
+            with dpg.group(show=False) as self.panel:
+                dpg.add_separator()
+                # Power switch + stream button on one line.
+                with _borderless_table(policy=dpg.mvTable_SizingFixedFit) as power_row:
+                    dpg.add_table_column(width_stretch=True)
+                    dpg.add_table_column(width_fixed=True, init_width_or_weight=STREAM_WIDTH)
+                    with dpg.table_row():
+                        with dpg.group(horizontal=True, horizontal_spacing=10):
+                            self._switch = Switch(None, self.toggle_power)
+                            self.power_button = self._switch.button
+                            self.power_label = dpg.add_text("Off")
+                        self.stream_button = dpg.add_button(label=STREAM_LABELS[False], width=STREAM_WIDTH,
+                                                            callback=self.toggle_stream)
+                bind(power_row, "tight")
+                use_font(self.power_label, "heading")
                 with dpg.tooltip(self.power_button):
                     dpg.add_text("Turn the camera on (open it) or off (close it)")
                 with dpg.tooltip(self.stream_button):
                     self.stream_tip = dpg.add_text("Start streaming")
-            dpg.bind_item_theme(table, CameraRow._compact)
-            self.acq_text = dpg.add_text("", color=TEXT_DIM, wrap=PANEL_TEXT_WRAP)
-            dpg.add_separator()
+                self.acq_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
+                use_font(self.acq_text, "small")
 
-            rec_title = dpg.add_text("Video Recording")
-            use_font(rec_title, "heading")
-            with dpg.group(horizontal=True):
-                self.video_format = dpg.add_combo(list(VIDEO_FORMATS), default_value=recording.default_mode.label,
-                                                  width=CONTROL_WIDTH)
-                self.rec_button = dpg.add_button(label="● Record", width=CONTROL_WIDTH,
-                                                 callback=self.toggle_recording)
-            self.rec_text = dpg.add_text("", color=TEXT_DIM, wrap=PANEL_TEXT_WRAP)
-            dpg.add_separator()
+                caption("Video recording")
+                with dpg.group(horizontal=True):
+                    self.video_format = dpg.add_combo(list(VIDEO_FORMATS), default_value=recording.default_mode.label,
+                                                      width=CONTROL_WIDTH)
+                    self.rec_button = dpg.add_button(label="●  Record", width=-1, callback=self.toggle_recording)
+                self.rec_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
+                use_font(self.rec_text, "small")
 
-            cap_title = dpg.add_text("Image Capture")
-            use_font(cap_title, "heading")
-            with dpg.group(horizontal=True):
-                self.image_format = dpg.add_combo(list(IMAGE_FORMAT_LABELS), default_value="PNG", width=CONTROL_WIDTH)
-                self.capture_button = dpg.add_button(label="Capture", width=CONTROL_WIDTH, callback=self.capture)
-            self.capture_text = dpg.add_text("", color=TEXT_DIM, wrap=PANEL_TEXT_WRAP)
-            dpg.add_separator()
+                caption("Image capture")
+                with dpg.group(horizontal=True):
+                    self.image_format = dpg.add_combo(list(IMAGE_FORMAT_LABELS), default_value="PNG",
+                                                      width=CONTROL_WIDTH)
+                    self.capture_button = dpg.add_button(label="Capture", width=-1, callback=self.capture)
+                self.capture_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
+                use_font(self.capture_text, "small")
 
-            self.grid_button = dpg.add_button(label="Property Grid", width=-1,
-                                              callback=lambda: self._on_property_grid(self.camera_id))
-            self.stats_text = dpg.add_text("", color=TEXT_DIM)
+                # Live statistics as three metric blocks (value over caption).
+                with _borderless_table(policy=dpg.mvTable_SizingStretchSame) as metrics:
+                    for _ in range(3):
+                        dpg.add_table_column()
+                    with dpg.table_row():
+                        self._metrics = [dpg.add_text(DASH) for _ in range(3)]
+                    with dpg.table_row():
+                        for label in ("Mb/s", "FPS", "Frames"):
+                            caption(label, upper=False)
+                bind(metrics, "compact_table")
+                for item in self._metrics:
+                    use_font(item, "metric")
+                self.stats_text = self._metrics[0]
+                self.grid_button = dpg.add_button(label="Property Grid…", width=-1,
+                                                  callback=lambda: self._on_property_grid(self.camera_id))
+        bind(self.card, "card")
 
     # --- expand / select ----------------------------------------------------------
     def toggle_expanded(self) -> None:
@@ -176,7 +196,9 @@ class CameraRow:
         self._last_details = 0.0
 
     def set_selected(self, selected: bool) -> None:
+        self.selected = selected
         dpg.set_value(self.name, selected)
+        bind(self.card, "card_selected" if selected else "card")
 
     # --- power / streaming -------------------------------------------------------------
     @property
@@ -290,34 +312,53 @@ class CameraRow:
         saved = files[0].processed or files[0].raw
         self._set_text(self.capture_text, f"Saved {saved.name}")
 
+
     # --- per frame -------------------------------------------------------------------
+    def _bind(self, item: int | str, role_name: str | None) -> None:
+        """Bind a role theme only when it changes (binding every frame is wasted work)."""
+        if self._bound.get(item, "") != role_name:
+            self._bound[item] = role_name
+            dpg.bind_item_theme(item, theme.role(role_name) if role_name else 0)
+
     def update(self) -> None:
         state = self._manager.state(self.camera_id)
         acquiring = state is CameraState.ACQUIRING
         camera_on = self.camera_on
-        dpg.configure_item(self.dot, color=STATE_COLORS[state])
-        on, off, rec = CameraRow._themes
+        recording = self._recording.is_recording(self.camera_id)
+        dot_key = (state, recording, theme.revision())
+        if dot_key != self._dot_key:
+            self._dot_key = dot_key
+            dpg.configure_item(self.dot, color=STATE_COLORS[state])
+            if recording:
+                dpg.set_value(self.state_text, "Recording")
+                dpg.configure_item(self.state_text, color=COLORS["error"])
+            else:
+                dpg.set_value(self.state_text, STATE_NAMES[state])
+                emphasised = state in (CameraState.ACQUIRING, CameraState.ERROR)
+                dpg.configure_item(self.state_text, color=STATE_COLORS[state] if emphasised else THEME_TEXT)
         pending = self._pending
         if self._choose_adapter is not None:  # dialogs must be created on the UI thread
             check, candidates = self._choose_adapter
             self._choose_adapter = None
             self._ask_adapter(check, candidates)
         if pending in ("check", "close", "force"):
-            dpg.configure_item(self.power_button, label=PENDING_LABELS[pending], enabled=False)
+            self._switch.set(pending == "close", False, PENDING_LABELS[pending])
+            dpg.set_value(self.power_label, PENDING_LABELS[pending])
         else:
-            dpg.configure_item(self.power_button, label="ON" if camera_on else "OFF", enabled=pending is None)
-            dpg.bind_item_theme(self.power_button, on if camera_on else off)
+            self._switch.set(camera_on, pending is None, "ON" if camera_on else "OFF")
+            dpg.set_value(self.power_label, "On" if camera_on else "Off")
         if pending in ("start", "stop"):
             dpg.configure_item(self.stream_button, label=PENDING_LABELS[pending], enabled=False)
+            self._bind(self.stream_button, None)
         else:
-            dpg.configure_item(self.stream_button, label=STOP if acquiring else PLAY,
+            dpg.configure_item(self.stream_button, label=STREAM_LABELS[acquiring],
                                enabled=camera_on and pending is None)
-            dpg.bind_item_theme(self.stream_button, on if acquiring else 0)
+            self._bind(self.stream_button, None if acquiring or not camera_on else "primary")
             dpg.set_value(self.stream_tip, "Stop streaming" if acquiring else
                           ("Start streaming" if camera_on else "Turn the camera on first"))
-        recording = self._recording.is_recording(self.camera_id)
-        dpg.configure_item(self.rec_button, label="■ Stop" if recording else "● Record", enabled=acquiring or recording)
-        dpg.bind_item_theme(self.rec_button, rec if recording else 0)
+        dpg.configure_item(self.rec_button, label="■  Stop recording" if recording else "●  Record",
+                           enabled=acquiring or recording)
+        self._bind(self.rec_button, "danger" if recording else ("record_idle" if acquiring else None))
         dpg.configure_item(self.video_format, enabled=not recording)
         dpg.configure_item(self.capture_button, enabled=acquiring)
 
@@ -332,14 +373,14 @@ class CameraRow:
         if self._notice is not None and not camera_on:
             text, is_error = self._notice
             dpg.set_value(self.acq_text, text)
-            dpg.configure_item(self.acq_text, color=ERROR_COLOR if is_error else WARNING_COLOR)
+            dpg.configure_item(self.acq_text, show=True, color=COLORS["error"] if is_error else COLORS["warning"])
         elif status.error:
             self._set_text(self.acq_text, status.error, error=True)
         elif not camera_on:
-            self._set_text(self.acq_text, "Camera off")
+            self._set_text(self.acq_text, "Camera is off. Switch it on to stream.")
         else:
-            self._set_text(self.acq_text, "Camera on \u00b7 streaming" if acquiring else
-                           "Camera on \u00b7 not streaming (stream-locked settings can be changed)")
+            self._set_text(self.acq_text, "Streaming" if acquiring else
+                           "On, not streaming · stream-locked settings can be changed")
         current = self._recording.camera_recording(self.camera_id)
         if current is not None:
             minutes, seconds = divmod(int(current.elapsed_s), 60)
@@ -347,8 +388,10 @@ class CameraRow:
             dropped = st.frame_gaps + st.queue_overflows
             self._set_text(self.rec_text, f"● REC {minutes:02d}:{seconds:02d} · {st.frames_written:,} frames"
                            f" · {dropped} dropped", error=bool(dropped or st.error))
-        dpg.set_value(self.stats_text, f"{status.bandwidth_mbps:,.1f} Mb/s · {status.fps:.2f} FPS · "
-                      f"{status.frame_count:,} frames" if acquiring else "Not streaming")
+        values = ((f"{status.bandwidth_mbps:,.1f}", f"{status.fps:.2f}", f"{status.frame_count:,}")
+                  if acquiring else (DASH, DASH, DASH))
+        for item, value in zip(self._metrics, values):
+            dpg.set_value(item, value)
 
     # --- profiles (menu) ---------------------------------------------------------------
     def _save_profile(self) -> None:
@@ -358,7 +401,7 @@ class CameraRow:
             except (CameraError, OSError, ValueError) as exc:
                 dialogs.message("Save profile", str(exc))
                 return
-            dialogs.message("Save profile", f"Profile \u201c{name.strip()}\u201d saved to {path}")
+            dialogs.message("Save profile", f"Profile “{name.strip()}” saved to {path}")
         dialogs.prompt_text("Save profile", "Profile name", save)
 
     def _apply_profile(self) -> None:
@@ -368,14 +411,15 @@ class CameraRow:
             except CameraError as exc:
                 dialogs.message("Apply profile", str(exc))
                 return
-            text = f"Profile \u201c{name}\u201d applied."
+            text = f"Profile “{name}” applied."
             if warnings:
                 text += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
             dialogs.message("Apply profile", text)
         dialogs.choose("Apply profile", "Profile", self._profiles.list_profiles(), apply,
-                       empty_text="No saved profiles yet. Use \u201cSave settings as profile\u201d first.")
+                       empty_text="No saved profiles yet. Use “Save settings as profile” first.")
 
     @staticmethod
     def _set_text(item, text: str, error: bool = False) -> None:
+        """Secondary-coloured status text (the item is bound to the secondary text role), or red."""
         dpg.set_value(item, text)
-        dpg.configure_item(item, color=ERROR_COLOR if error else TEXT_DIM)
+        dpg.configure_item(item, color=COLORS["error"] if error else THEME_TEXT, show=bool(text))
