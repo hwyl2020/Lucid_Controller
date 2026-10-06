@@ -165,6 +165,11 @@ class CameraRow:
                                                   callback=lambda: self._on_property_grid(self.camera_id))
         bind(self.card, "card")
 
+    def delete(self) -> None:
+        """Remove the card (the camera was unplugged)."""
+        if dpg.does_item_exist(self.card):
+            dpg.delete_item(self.card)
+
     # --- expand / select ----------------------------------------------------------
     def toggle_expanded(self) -> None:
         self.set_expanded(not self.expanded)
@@ -229,6 +234,8 @@ class CameraRow:
         except (CameraError, ValueError) as exc:
             self._log.error("Could not %s %s: %s", action, cid, exc)
             self._notice = (str(exc), True)
+        except KeyError:
+            self._log.info("%s: camera was removed (unplugged) during %s", cid, action)
         finally:
             self._pending = None
 

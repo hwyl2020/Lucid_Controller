@@ -1,11 +1,11 @@
-; Inno Setup script: Apertix Setup.exe (wraps the PyInstaller folder dist\Apertix).
+; Inno Setup script: VisionX Setup.exe (wraps the PyInstaller folder dist\VisionX).
 ; Built by:  .venv\Scripts\python -m installer.build   (passes AppVersion, AppPublisher)
 ;
 ; - Installs for all users (Program Files, needs admin) or just the current user (no admin);
-;   Setup asks. App data then lives in Documents\Apertix (Program Files) or next to the .exe.
+;   Setup asks. App data then lives in Documents\VisionX (Program Files) or next to the .exe.
 ; - Start menu shortcut, optional desktop shortcut, uninstaller (user data is kept).
 ; - Warns when the LUCID Arena SDK is missing (the app needs it to find cameras).
-; - Optional Windows Firewall rule for Apertix.exe (all-users install only): GigE image
+; - Optional Windows Firewall rule for VisionX.exe (all-users install only): GigE image
 ;   data arrives over the network, so a blocked app may not stream.
 
 #ifndef AppVersion
@@ -14,13 +14,13 @@
 #ifndef AppPublisher
   #define AppPublisher "HWYL"
 #endif
-#define AppName "Apertix"
-#define AppExe "Apertix.exe"
-#define FirewallRule "Apertix (GigE camera streams)"
+#define AppName "VisionX"
+#define AppExe "VisionX.exe"
+#define FirewallRule "VisionX (GigE camera streams)"
 
 [Setup]
 ; AppId identifies the product for upgrades/uninstall: never change it.
-AppId={{8CEB4F25-7FDA-491C-B6E1-D54BBC28C327}
+AppId={{710631DE-C648-4B44-999C-F02D81917F6C}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -50,7 +50,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "firewall"; Description: "Allow Apertix through Windows Firewall (recommended for GigE cameras)"; \
+Name: "firewall"; Description: "Allow VisionX through Windows Firewall (recommended for GigE cameras)"; \
   GroupDescription: "Network:"; Check: IsAdminInstallMode
 
 [Files]
@@ -87,10 +87,10 @@ begin
   if not ArenaSdkInstalled then
     CreateOutputMsgPage(wpWelcome,
       'LUCID Arena SDK not found',
-      'Apertix needs the LUCID Arena SDK to find and control cameras.',
+      'VisionX needs the LUCID Arena SDK to find and control cameras.',
       'The Arena SDK (64-bit) does not seem to be installed on this PC.' + #13#10#13#10 +
-      'You can continue installing Apertix now, then install the Arena SDK from LUCID Vision Labs ' +
+      'You can continue installing VisionX now, then install the Arena SDK from LUCID Vision Labs ' +
       '(thinklucid.com > Downloads Hub > Arena SDK for Windows) with its default options, ' +
       'including the LUCID Lightweight Filter Driver for GigE cameras.' + #13#10#13#10 +
-      'Without the SDK, Apertix opens but cannot find any cameras.');
+      'Without the SDK, VisionX opens but cannot find any cameras.');
 end;

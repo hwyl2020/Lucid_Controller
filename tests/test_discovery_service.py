@@ -126,3 +126,107 @@ def test_sidebar_and_tiles_pick_up_hot_plugged_cameras(ui):
     assert list(sidebar.rows) == ["A", "B"]
     assert dpg.get_value(sidebar._count) == "2"
     assert [v.camera_id for v in view._views] == ["A", "B", None, None]
+
+
+# --- unplugged cameras leave the app ---------------------------------------------------------
+def test_unplugged_idle_camera_is_reported_gone_after_missing_rounds():
+    manager = CameraManager()
+    net = Network("A", "B")
+    service = DiscoveryService(manager, net.scan, missing_scans=2)
+    service.scan_once()
+    net.ids = ["A"]  # B unplugged
+    service.scan_once()
+    assert service.take_gone() == []  # one missed reply is not enough
+    service.scan_once()
+    assert service.take_gone() == ["B"]
+    service.scan_once()
+    assert service.take_gone() == []  # reported once
+
+
+def test_camera_back_before_the_limit_is_kept():
+    manager = CameraManager()
+    net = Network("A")
+    service = DiscoveryService(manager, net.scan, missing_scans=2)
+    service.scan_once()
+    net.ids = []
+    service.scan_once()
+    net.ids = ["A"]
+    service.scan_once()
+    net.ids = []
+    service.scan_once()
+    assert service.take_gone() == []
+
+
+def test_streaming_camera_is_not_removed_on_a_missed_reply():
+    manager = CameraManager(frame_timeout=0.1)
+    net = Network("A")
+    service = DiscoveryService(manager, net.scan, missing_scans=1)
+    service.scan_once()
+    manager.connect("A")
+    manager.start_streaming("A")
+    net.ids = []
+    service.scan_once()
+    assert service.take_gone() == []
+    manager.stop_streaming("A")  # e.g. the stream failed after the cable was pulled
+    service.scan_once()
+    assert service.take_gone() == ["A"]
+    manager.shutdown()
+
+
+def test_cameras_not_found_by_discovery_are_never_removed():
+    manager = CameraManager()
+    manager.add_camera(sim("SIM"))  # e.g. a --simulators test camera
+    service = DiscoveryService(manager, Network().scan, missing_scans=1)
+    for _ in range(3):
+        service.scan_once()
+    assert service.take_gone() == []
+
+
+def test_adopted_startup_camera_is_removed_when_unplugged():
+    manager = CameraManager()
+    manager.add_camera(sim("A"))
+    service = DiscoveryService(manager, Network().scan, missing_scans=1)
+    service.adopt(["A"])
+    service.scan_once()
+    assert service.take_gone() == ["A"]
+
+
+def test_remove_camera_finishes_recording_and_closes_it(tmp_path):
+    from app.services.app_services import AppServices
+    cfg = {**DEFAULT_CONFIG}
+    for key in ("recording", "snapshots", "profiles", "sessions", "diagnostics", "logging"):
+        cfg[key] = {**DEFAULT_CONFIG[key], "directory": str(tmp_path / key)}
+    manager = CameraManager(frame_timeout=0.1)
+    camera = sim("A")
+    manager.add_camera(camera)
+    services = AppServices.create(cfg, tmp_path / "c.json", manager)
+    manager.connect("A")
+    manager.start_streaming("A")
+    services.recording.start(camera_ids=["A"])
+    time.sleep(0.3)
+    services.remove_camera("A")
+    assert manager.camera_ids == []  # gone from the app at once
+    deadline = time.monotonic() + 5
+    while (camera.connected or services.recording.is_recording("A")) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not camera.connected
+    assert not services.recording.is_recording("A")
+    services.remove_camera("A")  # already gone: no error
+
+
+def test_sidebar_and_tiles_drop_unplugged_cameras(ui):
+    manager, sidebar, view = ui
+    for cid in ("A", "B"):
+        manager.add_camera(sim(cid))
+    sidebar.update()
+    view.update()
+    manager.detach_camera("A")
+    sidebar.update()
+    view.update()
+    assert list(sidebar.rows) == ["B"] and sidebar.selected == "B"
+    assert [v.camera_id for v in view._views] == [None, "B", None, None]
+    manager.detach_camera("B")
+    sidebar.update()
+    view.update()
+    assert sidebar.rows == {} and dpg.is_item_shown(sidebar._empty)
+    assert dpg.get_value(sidebar._count) == "0"

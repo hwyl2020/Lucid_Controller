@@ -15,7 +15,7 @@ LOG_FORMAT = "%(asctime)s %(levelname)-8s [%(camera_id)s] [%(threadName)s] %(nam
 def setup_logging(log_dir: Path, level: str = "INFO") -> Path:
     """Configure the root logger and return the log file path."""
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "apertix.log"
+    log_file = log_dir / "visionx.log"
 
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))

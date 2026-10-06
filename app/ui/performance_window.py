@@ -76,6 +76,11 @@ class PerformanceWindow:
                                                 or "idle")
         )
 
+        present = {cam.status.camera_id for cam in sample.cameras}
+        for camera_id in [cid for cid in self._rows if cid not in present]:  # unplugged cameras
+            cells = self._rows.pop(camera_id)
+            if cells and dpg.does_item_exist(cells[0]):
+                dpg.delete_item(dpg.get_item_parent(cells[0]))
         for cam in sample.cameras:
             st = cam.status
             cells = self._rows.get(st.camera_id)

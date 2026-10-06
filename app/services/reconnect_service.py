@@ -69,7 +69,11 @@ class ReconnectService:
         """One pass over all cameras (the background thread calls this; tests may too)."""
         now = time.monotonic()
         for camera_id in self._manager.camera_ids:
-            if not self._should_reconnect(camera_id):
+            try:
+                should = self._should_reconnect(camera_id)
+            except KeyError:  # removed (unplugged) meanwhile
+                continue
+            if not should:
                 with self._lock:
                     self._pending.pop(camera_id, None)
                 continue

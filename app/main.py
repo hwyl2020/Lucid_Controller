@@ -1,7 +1,7 @@
 """Entry point: python -m app.main [--config PATH] [--log-level LEVEL] [--simulators N] [--no-arena]
 
-Also the entry point of the packaged Windows app (``Apertix.exe``, see installer/):
-there the data folder comes from ``app.paths`` and no simulator cameras are added unless asked for.
+Also the entry point of the packaged Windows app (``VisionX.exe``, see installer/):
+there the data folder comes from ``app.paths``. Simulator cameras are only added with --simulators.
 """
 
 from __future__ import annotations
@@ -41,8 +41,7 @@ def parse_args() -> argparse.Namespace:
         "--simulators",
         type=int,
         default=None,
-        help="Number of SimulatorCameras to add (default: 4 if no Arena camera is found, else 0; "
-             "0 in the packaged app)",
+        help="Number of SimulatorCameras to add, for testing without hardware (default: 0)",
     )
     parser.add_argument("--no-arena", action="store_true", help="Skip Arena SDK camera discovery")
     return parser.parse_args()
@@ -62,21 +61,22 @@ def add_simulators(manager: CameraManager, count: int) -> None:
         )
 
 
-def add_arena_cameras(manager: CameraManager) -> int:
+def add_arena_cameras(manager: CameraManager) -> list[str]:
+    """Startup discovery; returns the ids of the cameras added."""
     try:
         infos = discover_arena_cameras()
     except CameraError as exc:
         logger.error("%s", exc)
-        return 0
+        return []
     for info in infos:
         manager.add_camera(ArenaCamera(info))
-    return len(infos)
+    return [info.serial for info in infos]
 
 
 SDK_MISSING_TEXT = (
     "The LUCID Arena SDK is not installed on this PC, so cameras cannot be found.\n\n"
     "Install the Arena SDK for Windows (64-bit) from LUCID Vision Labs (thinklucid.com > Downloads), "
-    "then restart Apertix.\n\nDetails: {error}"
+    "then restart VisionX.\n\nDetails: {error}"
 )
 
 
@@ -103,16 +103,13 @@ def main() -> None:
     sdk_error = None if args.no_arena else check_arena_sdk()
     if sdk_error:
         logger.error("%s", sdk_error)
-    arena_count = 0 if args.no_arena or sdk_error else add_arena_cameras(manager)
-    default_simulators = 0 if arena_count or paths.is_frozen() else 4
-    simulators = args.simulators if args.simulators is not None else default_simulators
-    if simulators and not arena_count and args.simulators is None:
-        logger.info("No Arena cameras found; adding %d simulator cameras", simulators)
-    add_simulators(manager, simulators)
+    arena_ids = [] if args.no_arena or sdk_error else add_arena_cameras(manager)
+    add_simulators(manager, args.simulators or 0)  # test cameras only when asked for
 
     # Hot-plug: cameras connected later are found by the discovery service (no restart needed).
     discover = None if args.no_arena or sdk_error else arena_scan
     services = AppServices.create(config, args.config, manager, logs, discover=discover)
+    services.discovery.adopt(arena_ids)  # removed again if unplugged
     services.start()
 
     dpg.create_context()
@@ -123,7 +120,7 @@ def main() -> None:
         window = MainWindow(services)
         dpg.setup_dearpygui()
         dpg.show_viewport()
-        if sdk_error and paths.is_frozen():
+        if sdk_error:
             dialogs.message("Arena SDK not found", SDK_MISSING_TEXT.format(error=sdk_error))
         frame_period = 1.0 / UI_MAX_FPS
         while dpg.is_dearpygui_running():

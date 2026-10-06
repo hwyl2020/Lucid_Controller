@@ -1,4 +1,4 @@
-"""Generate the Apertix app icon and brand artwork.
+"""Generate the VisionX app icon and brand artwork.
 
 Icon "A · Iris": an Apple-style squircle in HWYL deep navy, rounded orange viewfinder corner
 brackets (from the HWYL mark), and a silver aperture iris around a blue glass lens.
@@ -6,7 +6,7 @@ brackets (from the HWYL mark), and a silver aperture iris around a blue glass le
 Writes:
   app/resources/app.ico        .exe / window icon (16-256 px, PNG-compressed)
   app/resources/app.png        256 px, shown in the app's header
-  docs/branding/apertix_icon_1024.png, apertix_wordmark_dark.png, apertix_wordmark_light.png
+  docs/branding/visionx_icon_1024.png, visionx_wordmark_dark.png, visionx_wordmark_light.png
 
 Run: python -m installer.make_icon   (needs Pillow: requirements-build.txt)
 """
@@ -21,6 +21,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+from app import APP_NAME
 
 ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = ROOT / "app" / "resources"
@@ -194,13 +196,13 @@ def write_ico(master: Image.Image, path: Path) -> None:
 
 
 def wordmark(icon: Image.Image, dark: bool) -> Image.Image:
-    """Lockup: icon + "Apertix" (the x in HWYL orange) + "by HWYL"."""
+    """Lockup: icon + the app name (its last letter, the X, in HWYL orange) + "by HWYL"."""
     bg = (10, 16, 28) if dark else (246, 247, 250)
     text, sub = ((245, 247, 250), (140, 152, 172)) if dark else ((16, 24, 40), (110, 120, 138))
     title = ImageFont.truetype(r"C:\Windows\Fonts\seguisb.ttf", 170)
     small = ImageFont.truetype(r"C:\Windows\Fonts\segoeui.ttf", 50)
     probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    title_w = probe.textlength("Apertix", font=title)
+    title_w = probe.textlength(APP_NAME, font=title)
     ascent, descent = title.getmetrics()
     icon_px, pad, gap = 300, 60, 50
     W, H = int(pad + icon_px + gap + title_w + pad), 420
@@ -211,8 +213,9 @@ def wordmark(icon: Image.Image, dark: bool) -> Image.Image:
     # Title and tagline centred as a block next to the icon; the tagline sits below the descenders.
     block_h = ascent + descent + 10 + small.getmetrics()[0]
     x, y = pad + icon_px + gap, (H - block_h) // 2 - 10
-    d.text((x, y), "Aperti", font=title, fill=text)
-    d.text((x + probe.textlength("Aperti", font=title), y), "x", font=title, fill=ORANGE_BOTTOM)
+    head, tail = APP_NAME[:-1], APP_NAME[-1]
+    d.text((x, y), head, font=title, fill=text)
+    d.text((x + probe.textlength(head, font=title), y), tail, font=title, fill=ORANGE_BOTTOM)
     d.text((x + 8, y + ascent + descent + 10), "by HWYL", font=small, fill=sub)
     return im
 
@@ -223,9 +226,10 @@ def main() -> None:
     icon = render_icon()
     write_ico(icon, RESOURCES / "app.ico")
     icon.resize((256, 256), Image.LANCZOS).save(RESOURCES / "app.png")
-    icon.save(BRANDING / "apertix_icon_1024.png")
-    wordmark(icon, dark=True).save(BRANDING / "apertix_wordmark_dark.png")
-    wordmark(icon, dark=False).save(BRANDING / "apertix_wordmark_light.png")
+    slug = APP_NAME.lower()
+    icon.save(BRANDING / f"{slug}_icon_1024.png")
+    wordmark(icon, dark=True).save(BRANDING / f"{slug}_wordmark_dark.png")
+    wordmark(icon, dark=False).save(BRANDING / f"{slug}_wordmark_light.png")
     print(f"wrote {RESOURCES / 'app.ico'}, {RESOURCES / 'app.png'} and {BRANDING}")
 
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Apertix** (by HWYL; formerly "LUCID Camera Studio"): a Python desktop app for discovering, controlling, viewing (multiview) and recording multiple LUCID Vision Labs cameras through the Arena SDK. It's for engineering and industrial use, with a polished dark-first "camera workstation" UI.
+**VisionX** (by HWYL; formerly "LUCID Camera Studio", briefly "Apertix"): a Python desktop app for discovering, controlling, viewing (multiview) and recording multiple LUCID Vision Labs cameras through the Arena SDK. It's for engineering and industrial use, with a polished dark-first "camera workstation" UI.
 
 The full baseline spec (requirements, milestones, two-developer split) is the original project brief. This file keeps the parts needed to work in the code. Major architectural changes must be discussed and documented before implementation.
 
@@ -31,10 +31,10 @@ python -m venv --system-site-packages .venv
 ```
 
 - `config.json` (gitignored) is optional. It is merged over `DEFAULT_CONFIG` in `app/services/configuration.py`, so only overrides need to be written.
-- Logs go to `logs/apertix.log`, a rotating file.
+- Logs go to `logs/visionx.log`, a rotating file.
 - pytest runs from the repo root, with `pythonpath = .` set in `pyproject.toml`.
-- **Startup:** the app discovers Arena cameras first. If none are found and `--simulators` is not given, it adds 4 simulators (none in the packaged app). Discovery takes about 1 s at startup.
-- **Hot-plug:** cameras connected later appear without a restart (see "Hot-plug discovery").
+- **Startup:** the app discovers Arena cameras first, which takes about 1 s. Simulators are only added with `--simulators N` (for testing; never by default, also from source).
+- **Hot-plug:** cameras connected later appear, and unplugged cameras disappear, without a restart (see "Hot-plug discovery").
 - **Tests without hardware:**
   - `tests/fake_arena.py` is an in-memory fake of the `arena_api` surface that `ArenaCamera` uses.
   - `tests/test_arena_sdk_buffers.py` exercises the **real** installed SDK through `BufferFactory.create`, with no camera needed. It is skipped if the SDK is absent.
@@ -252,8 +252,14 @@ Platform-neutral, premium "camera workstation" look (Apple-level polish, not a m
 
 ### Hot-plug discovery (`app/services/discovery_service.py`)
 
-- **`DiscoveryService`** repeats the GigE discovery every 3 s on a background thread (`arena_scan`: `all_device_infos(400 ms)` → `ArenaCamera`). It adds cameras with an unknown serial to `CameraManager`.
-  - It never removes or touches known cameras: an unplugged camera keeps its row, and auto-reconnect covers cameras lost mid-stream.
+- **`DiscoveryService`** repeats the GigE discovery every 2 s on a background thread (`arena_scan`: `all_device_infos(400 ms)` → `ArenaCamera`). It adds cameras with an unknown serial to `CameraManager`.
+- **Unplugged cameras are removed:**
+  - A managed camera is one the service found, or one `main.py` adopted from startup discovery; simulators are never managed.
+  - When a managed camera is missing for `MISSING_SCANS` (3) rounds (about 6 s) and is not ACQUIRING, it is reported by `take_gone()`. A streaming camera is never removed on a missed reply; after a cable pull its stream fails within about 1 s, and the next round removes it.
+  - `MainWindow.update` (UI thread) calls `AppServices.remove_camera`:
+    - `CameraManager.detach_camera` drops it from `camera_ids` at once.
+    - A background thread stops the worker, finishes its recording and closes the device (`CameraManager.release`), because closing a lost device can block.
+  - The sidebar rows, the tiles (`MultiView._assign_new_cameras` frees them), the Property Grid windows and the Performance rows follow `camera_ids`. `ReconnectService` and `CameraRow` worker actions tolerate a vanished id (KeyError).
   - Cameras ▸ Scan for cameras now triggers a round immediately (`scan_now`).
   - `main.py` passes `discover=arena_scan` to `AppServices.create` only when the SDK loaded (not with `--no-arena`). Shutdown stops discovery first.
 - **The UI follows `manager.camera_ids` each frame:**
@@ -293,30 +299,31 @@ Recording output layout: `Recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_N
 
 ## Name and brand
 
-- **Name:** **Apertix** by **HWYL**. `app.APP_NAME` / `app.APP_PUBLISHER` are the single source. They feed the window title, the header, the data folder, `session.json` and the `.exe` version info.
-  - "Aperture X" was dropped because Apple holds the "APERTURE" mark for image software.
+- **Name:** **VisionX** by **HWYL**. `app.APP_NAME` / `app.APP_PUBLISHER` are the single source. They feed the window title, the header, the data folder, the log name, `session.json`, the wordmark and the `.exe` / installer names.
+  - Earlier names: "Aperture X" was dropped because Apple holds the "APERTURE" mark for image software; then "Apertix".
+  - **Trademark caution:** VISIONx Inc. (visionxinc.com) sells machine-vision software and multi-camera systems, and Tordivel sells "Scorpion VisionX". Clear the name before publishing.
 - **Icon "A · Iris":**
   - An Apple-style squircle in HWYL navy, rounded orange viewfinder brackets from the HWYL mark, and a silver iris around a blue glass lens.
-  - Generated by `python -m installer.make_icon` (Pillow, a build-only dependency). It writes `app/resources/app.ico` (16–256 px), `app.png` (shown in the header) and `docs/branding/` (1024 px icon, dark and light wordmarks, with the "x" in HWYL orange).
+  - Generated by `python -m installer.make_icon` (Pillow, a build-only dependency). It writes `app/resources/app.ico` (16–256 px), `app.png` (shown in the header) and `docs/branding/<name>_*` (1024 px icon, dark and light wordmarks). In the wordmarks the name's last letter, the X, is in HWYL orange.
 
 ## Windows package (`installer/`)
 
-- **Build:** `installer/build.py` runs PyInstaller with `installer/apertix.spec`.
-  - Output: a one-folder, windowed `dist/Apertix/` (`Apertix.exe` + `_internal/` + `README_FIRST.txt`) and `dist/Apertix_<version>_win64.zip`, about 157 MB.
+- **Build:** `installer/build.py` runs PyInstaller with `installer/visionx.spec`.
+  - Output: a one-folder, windowed `dist/VisionX/` (`VisionX.exe` + `_internal/` + `README_FIRST.txt`) and `dist/VisionX_<version>_win64.zip`, about 157 MB.
   - The version comes from `app.__version__`; `build/` and `dist/` are gitignored.
   - The folder is named `installer/`, not `packaging/`, because `packaging` would shadow the PyPI package that pip and PyInstaller import.
-- **Setup.exe** (`installer/apertix.iss`, Inno Setup 6, installed with `winget install --id JRSoftware.InnoSetup -e`):
-  - `build.py` runs ISCC after PyInstaller when it is found (`--no-installer` skips it) and writes `dist/Apertix_Setup_<version>.exe` (~44 MB).
+- **Setup.exe** (`installer/visionx.iss`, Inno Setup 6, installed with `winget install --id JRSoftware.InnoSetup -e`):
+  - `build.py` runs ISCC after PyInstaller when it is found (`--no-installer` skips it) and writes `dist/VisionX_Setup_<version>.exe` (~44 MB).
   - It installs for all users (Program Files, admin) or the current user (no admin). It adds Start menu shortcuts and an optional desktop icon.
   - It warns if the Arena SDK registry key is missing, without blocking the install.
   - The optional firewall rule (admin installs only) is `netsh advfirewall`, and the uninstaller removes it. The uninstaller keeps user data.
-  - **Keep `AppId` fixed**: upgrades depend on it.
+  - **Keep `AppId` fixed**: upgrades depend on it. VisionX got a new AppId; the old Apertix test installs are a separate product, so uninstall them.
   - Verified: a silent per-user install, launch (camera discovered) and uninstall.
 - **Target PC requirement:** the LUCID Arena SDK (64-bit) must be installed. The bundled `arena_api` finds `ArenaC_v140.dll` through the SDK's registry key (`HKLM\SOFTWARE\Lucid Vision Labs\Arena SDK`, `InstallFolder`), and the SDK also installs the GigE filter driver. The SDK's DLLs are not bundled: redistribution is not cleared and the driver needs an installer.
   - In the packaged app, a missing SDK shows an "Arena SDK not found" dialog, and no simulators are added unless `--simulators` is given.
 - **Data folder** (`app/paths.py`):
   - When frozen, `main()` changes the working directory to the data folder, so every relative path in the config resolves there.
-  - The data folder is the `.exe` folder if it is writable (portable / USB use), otherwise `Documents\Apertix`.
+  - The data folder is the `.exe` folder if it is writable (portable / USB use), otherwise `Documents\VisionX`.
   - From source nothing changes. `paths.resource()` locates `app/resources` (`app.ico`, made by `python -m installer.make_icon`).
 - **Verified:**
   - The `.exe` started on the dev PC, wrote its logs next to itself and discovered the TRI122S-C.

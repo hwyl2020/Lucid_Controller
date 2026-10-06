@@ -1,6 +1,7 @@
 """Camera list: one CameraRow per camera, each with its own expandable controls.
 
-Rows are added live when the discovery service finds a newly connected camera (hot-plug).
+Rows follow ``CameraManager.camera_ids``: added when a camera is connected (hot-plug discovery)
+and removed when it is unplugged.
 """
 
 from __future__ import annotations
@@ -44,10 +45,18 @@ class CameraSidebar:
         self._add_new_rows()
 
     def update(self) -> None:
-        if len(self.rows) != len(self._manager.camera_ids):
-            self._add_new_rows()
+        if list(self.rows) != self._manager.camera_ids:
+            self._sync_rows()
         for row in self.rows.values():
             row.update()
+
+    def _sync_rows(self) -> None:
+        present = set(self._manager.camera_ids)
+        for camera_id in [cid for cid in self.rows if cid not in present]:
+            self.rows.pop(camera_id).delete()
+            if self.selected == camera_id:
+                self.selected = None
+        self._add_new_rows()
 
     def _add_new_rows(self) -> None:
         for camera_id in self._manager.camera_ids:

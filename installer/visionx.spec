@@ -1,4 +1,4 @@
-# PyInstaller spec: one-folder Windows build of Apertix.
+# PyInstaller spec: one-folder Windows build of VisionX.
 # Build with:  .venv\Scripts\python -m installer.build
 #
 # arena_api (LUCID's Python wrapper) is bundled; it loads the ArenaC DLLs from the Arena SDK that
@@ -25,10 +25,10 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Apertix",
+    name="VisionX",
     icon=ICON,
-    console=False,  # windowed app; everything is logged to logs/apertix.log
+    console=False,  # windowed app; everything is logged to logs/visionx.log
     upx=False,
     version=str(ROOT / "build" / "version_info.txt"),
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Apertix")
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="VisionX")

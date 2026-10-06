@@ -104,8 +104,13 @@ class MultiView:
         self._resize_tiles()
 
     def _assign_new_cameras(self) -> None:
-        """Put newly added cameras into the next free tiles; existing tiles keep their camera."""
+        """Follow the camera list: tiles of removed cameras are freed, new cameras go into free tiles;
+        other tiles keep their camera."""
         camera_ids = self._manager.camera_ids
+        present = set(camera_ids)
+        for view in self._views:
+            if view.camera_id is not None and view.camera_id not in present:
+                view.assign(None, self._manager)
         shown = {view.camera_id for view in self._views}
         free = (view for view in self._views if view.camera_id is None)
         for camera_id in camera_ids:

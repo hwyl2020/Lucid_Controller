@@ -13,13 +13,13 @@ def test_bundle_contents(tmp_path):
     manager.connect("SIM")
     logs = tmp_path / "logs"
     logs.mkdir()
-    (logs / "apertix.log").write_text("hello log")
+    (logs / "visionx.log").write_text("hello log")
     path = export_diagnostics(tmp_path / "out", manager, DEFAULT_CONFIG, logs)
     manager.shutdown()
 
     with zipfile.ZipFile(path) as bundle:
         names = set(bundle.namelist())
-        assert {"system.json", "network.json", "cameras.json", "config.json", "logs/apertix.log"} <= names
+        assert {"system.json", "network.json", "cameras.json", "config.json", "logs/visionx.log"} <= names
         system = json.loads(bundle.read("system.json"))
         assert system["packages"]["dearpygui"] and system["application_version"]
         cameras = json.loads(bundle.read("cameras.json"))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +21,9 @@ from app.services.profile_service import ProfileService, SettingsApplier
 from app.services.reconnect_service import ReconnectService
 from app.services.recording_service import RecordingService
 from app.services.session_manager import SessionManager
+from app.camera_log import for_camera
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -74,6 +79,27 @@ class AppServices:
         service = DiscoveryService(manager, discover) if discover else DiscoveryService(manager)
         service.enabled = discover is not None
         return service
+
+    def remove_camera(self, camera_id: str) -> None:
+        """Take an unplugged camera out of the app (call on the UI thread).
+
+        It leaves ``manager.camera_ids`` at once, so the UI drops it on the next frame; its
+        recording is finished and the device is closed on a background thread (closing a lost
+        GigE device can block)."""
+        try:
+            camera, worker = self.manager.detach_camera(camera_id)
+        except KeyError:
+            return
+        logger.info("Removing %s %s (disconnected)", camera.model, camera.serial_number, extra=for_camera(camera_id))
+
+        def finish() -> None:
+            if worker is not None:
+                worker.stop()
+            if self.recording.is_recording(camera_id):
+                self.recording.stop([camera_id])
+            self.manager.release(camera, None)
+
+        threading.Thread(target=finish, name=f"remove-{camera_id}", daemon=True).start()
 
     def start(self) -> None:
         self.reconnect.start()

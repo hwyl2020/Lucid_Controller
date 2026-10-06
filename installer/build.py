@@ -1,5 +1,5 @@
-"""Build the Windows app: dist/Apertix/ (portable folder), a zip of it and, when Inno Setup 6 is
-installed, dist/Apertix_Setup_<version>.exe (installer/apertix.iss).
+"""Build the Windows app: dist/VisionX/ (portable folder), a zip of it and, when Inno Setup 6 is
+installed, dist/VisionX_Setup_<version>.exe (installer/visionx.iss).
 
     .venv\\Scripts\\python -m pip install -r requirements-build.txt
     winget install --id JRSoftware.InnoSetup -e        (once, for the Setup.exe)
@@ -63,7 +63,7 @@ def build_installer() -> Path | None:
         print("\nInno Setup 6 not found: skipped Setup.exe (winget install --id JRSoftware.InnoSetup -e)")
         return None
     subprocess.run([str(iscc), "/Q", f"/DAppVersion={__version__}", f"/DAppPublisher={APP_PUBLISHER}",
-                    str(ROOT / "installer" / "apertix.iss")], check=True, cwd=ROOT / "installer")
+                    str(ROOT / "installer" / "visionx.iss")], check=True, cwd=ROOT / "installer")
     return DIST / f"{APP_TITLE}_Setup_{__version__}.exe"
 
 
@@ -76,12 +76,12 @@ def main() -> None:
 
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
                     "--distpath", str(DIST), "--workpath", str(BUILD / "pyinstaller"),
-                    str(ROOT / "installer" / "apertix.spec")], check=True, cwd=ROOT)
+                    str(ROOT / "installer" / "visionx.spec")], check=True, cwd=ROOT)
 
     readme = (ROOT / "installer" / "README_FIRST.txt").read_text(encoding="utf-8")
     (APP_DIR / "README_FIRST.txt").write_text(readme.replace("{version}", __version__), encoding="utf-8")
 
-    archive = shutil.make_archive(str(DIST / f"Apertix_{__version__}_win64"), "zip", DIST, APP_TITLE)
+    archive = shutil.make_archive(str(DIST / f"VisionX_{__version__}_win64"), "zip", DIST, APP_TITLE)
     size_mb = sum(f.stat().st_size for f in APP_DIR.rglob("*") if f.is_file()) / 1e6
     print(f"\nBuilt {APP_DIR} ({size_mb:.0f} MB)\nZip:  {archive}")
     if "--no-installer" not in sys.argv:

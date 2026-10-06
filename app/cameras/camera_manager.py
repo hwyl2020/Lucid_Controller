@@ -41,10 +41,30 @@ class CameraManager:
             self._cameras[camera.camera_id] = camera
 
     def remove_camera(self, camera_id: str) -> None:
+        """Stop and close the camera, then forget it."""
+        self.release(*self.detach_camera(camera_id))
+
+    def detach_camera(self, camera_id: str) -> tuple[CameraDevice, AcquisitionWorker | None]:
+        """Forget the camera immediately (it disappears from ``camera_ids`` at once) and hand back the
+        camera and its worker; pass them to ``release`` (may block: stops and closes the device)."""
         with self._lock:
-            self.disconnect(camera_id)
-            del self._cameras[camera_id]
+            camera = self._cameras.pop(camera_id)
+            worker = self._workers.pop(camera_id, None)
+            self._display_queues.pop(camera_id, None)
             self._errors.pop(camera_id, None)
+            self._wanted_streaming.discard(camera_id)
+            self._recording_queues.pop(camera_id, None)
+        return camera, worker
+
+    @staticmethod
+    def release(camera: CameraDevice, worker: AcquisitionWorker | None) -> None:
+        if worker is not None:
+            worker.stop()
+        try:
+            camera.disconnect()
+        except CameraError as exc:
+            logger.debug("Closing removed camera %s: %s", camera.camera_id, exc, extra=for_camera(camera.camera_id))
+        logger.info("Removed %s", camera.camera_id, extra=for_camera(camera.camera_id))
 
     def camera(self, camera_id: str) -> CameraDevice:
         with self._lock:

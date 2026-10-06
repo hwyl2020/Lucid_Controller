@@ -209,6 +209,10 @@ class MainWindow:
     # --- per frame ------------------------------------------------------------
     def update(self) -> None:
         """Called once per rendered frame from the UI thread."""
+        # Unplugged cameras leave the app (the views below follow manager.camera_ids).
+        for camera_id in self._services.discovery.take_gone():
+            self._services.remove_camera(camera_id)
+        self._close_removed_grids()
         # Polled every frame: also enforces the low-disk auto-stop of active recordings.
         recording_status = self._services.recording.status()
         self._sidebar_splitter.update()
@@ -382,6 +386,13 @@ class MainWindow:
             camera_names=lambda: {st.camera_id: st.display_name for st in self._services.statuses.statuses()},
             on_settings_changed=self._settings_changed,
         )
+
+    def _close_removed_grids(self) -> None:
+        if not self._property_grids:
+            return
+        present = set(self._manager.camera_ids)
+        for camera_id in [cid for cid in self._property_grids if cid not in present]:
+            self._property_grids.pop(camera_id).close()
 
     def _settings_changed(self, camera_ids: list[str]) -> None:
         """Another camera's settings were changed (e.g. Apply to all): refresh its open Property Grid."""
