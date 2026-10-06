@@ -222,6 +222,7 @@ class MainWindow:
         self._log_panel.update()
         self._fit_main_area()
         self._performance.update()
+        self._settings.update()
         for grid in list(self._property_grids.values()):
             grid.update()
         self._update_ui_fps()
@@ -245,11 +246,28 @@ class MainWindow:
             f"{total_fps:.1f} FPS total{sep}Layout {self._multiview.layout.replace('x', ' \u00d7 ')}"
             f"{sep}UI {self._ui_fps:.0f} FPS",
         )
-        dpg.set_value(self._status_rec, format_recording_status(recording_status).replace(" | ", sep))
+        dpg.set_value(self._status_rec, format_recording_status(
+            recording_status, self._recording_timers(recording_status)).replace(" | ", sep))
         active = recording_status.active or bool(recording_status.error)
         if active != self._status_rec_active:
             self._status_rec_active = active
             dpg.configure_item(self._status_rec, color=COLORS["error"] if active else THEME_TEXT)
+
+    def _recording_timers(self, status) -> list[tuple[str, float]]:
+        """(serial number, own recording time) of each recording camera, for the status bar."""
+        if not status.active:
+            return []
+        timers = []
+        for camera_id in status.cameras:
+            current = self._services.recording.camera_recording(camera_id)
+            if current is None:
+                continue
+            try:
+                name = self._manager.camera(camera_id).serial_number
+            except KeyError:  # unplugged meanwhile
+                name = camera_id
+            timers.append((name, current.elapsed_s))
+        return timers
 
     def _set_pill(self, pill, label: str, role_name: str, show: bool = True) -> None:
         if dpg.get_item_label(pill) != label:

@@ -25,6 +25,7 @@ from app.models.camera_status import camera_display_name
 from app.services.reconnect_service import ReconnectService
 from app.services.recording_service import RecordingService
 from app.ui import theme
+from app.ui.status_bar import format_duration, format_frame_time
 from app.ui.theme import COLORS, STATE_COLORS, bind, text_width, use_font
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ class CameraView:
         self._revision = -1
         self._message_key: tuple | None = None
         self._format_text = ""
+        self._frame_time = ""  # wall-clock time of the frame on screen
 
         self.tile = dpg.add_child_window(parent=parent, border=False, no_scrollbar=True, no_scroll_with_mouse=True)
         bind(self.tile, "tile_empty")  # rebound to "tile" when a camera is assigned
@@ -132,6 +134,7 @@ class CameraView:
         self._drop_texture()
         self.camera_id = camera_id
         self._last_frame_id = None
+        self._frame_time = ""
         if camera_id is None:
             title = ""
         else:
@@ -187,9 +190,12 @@ class CameraView:
             return
 
         state = manager.state(self.camera_id)
-        if state is CameraState.ACQUIRING and recording is not None and recording.is_recording(self.camera_id):
+        current = recording.camera_recording(self.camera_id) if recording is not None else None
+        if state is CameraState.ACQUIRING and current is not None:
+            # This camera's own recording time (cameras record independently).
             blink = int(time.monotonic() * 2) % 2 == 0
-            self._set_badge("REC", (*COLORS["error"], 235), (255, 255, 255) if blink else (255, 255, 255, 90))
+            self._set_badge(f"REC  {format_duration(current.elapsed_s)}", (*COLORS["error"], 235),
+                            (255, 255, 255) if blink else (255, 255, 255, 90))
         elif state is CameraState.ERROR:
             self._set_badge("ERROR", (*COLORS["error"], 200), (255, 255, 255))
         else:
@@ -198,6 +204,7 @@ class CameraView:
         frame = manager.latest_frame(self.camera_id)
         if frame is not None:
             self._show_frame(frame)
+            self._frame_time = format_frame_time(frame.timestamp)
             fmt = f"{frame.width} × {frame.height}  ·  {frame.pixel_format}"
             if fmt != self._format_text:
                 self._format_text = fmt
@@ -215,11 +222,10 @@ class CameraView:
         if stats is None:
             dpg.set_value(self._info, "")
         else:
+            # Real-time timestamp of the frame on screen (host wall clock, ms), then rate and frame id.
             frame_id = "–" if stats.last_frame_id is None else f"{stats.last_frame_id:,}"
-            dpg.set_value(
-                self._info,
-                f"{stats.measured_fps:5.1f} fps   ·   display {self._display_fps:4.1f}   ·   #{frame_id}",
-            )
+            stamp = f"{self._frame_time}   ·   " if self._frame_time else ""
+            dpg.set_value(self._info, f"{stamp}{stats.measured_fps:.1f} fps   ·   #{frame_id}")
         error = manager.last_error(self.camera_id)
         retry = reconnect.state(self.camera_id) if reconnect is not None and error else None
         if retry is not None:

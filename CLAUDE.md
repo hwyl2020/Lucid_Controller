@@ -151,7 +151,10 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Profiles** (`profiles/*.json`) and **sessions** (`sessions/*.json`, gitignored):
   - `SettingsApplier` captures and applies settings in the order format → ROI → exposure → gain → frame rate, through `CameraControlService`, so values are clamped to the target camera.
   - Failures become warnings rather than exceptions.
-- **Settings window** (File ▸ Settings): edits and saves `config.json`, and applies the theme, log level, auto-reconnect and recording settings live. Recording settings take effect on the next recording.
+- **Settings window** (File ▸ Settings): the recordings and images folders show the full path, plus a **Browse…** button.
+  - The button opens the native folder dialog (`ui/folder_picker.py`: tkinter `askdirectory` on its own thread with a hidden topmost root; the result comes back through `poll()` on the UI thread). Streams keep running while it is open.
+  - tkinter is therefore not excluded in `installer/visionx.spec`.
+  - It edits and saves `config.json`, and applies the theme, log level, auto-reconnect and recording settings live. Recording settings take effect on the next recording.
 - **Diagnostics** (File ▸ Export diagnostics): writes `diagnostics/diagnostics_*.zip` with system, network, camera and config info plus the logs. It never opens the SDK itself.
 - **Theming:** see "Design system" below. Palettes must set the bar, table and popup colours too, otherwise Dear PyGui keeps its dark defaults. Use `(-255, 0, 0, 255)` (`THEME_TEXT`) as a text colour to mean "theme default".
 - **Verified on the TRI122S-C:** the performance monitor showed 9.1 FPS, 111 MB/s, 0 missed frames, NIC `Ethernet`. Profile save/apply worked with no warnings.
@@ -159,6 +162,10 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 ### UI layout and conventions (UI polish pass)
 
 - **Tiles:** the image is fitted to the whole tile (aspect kept, centred; no crop or stretch). Name, state capsule (LIVE / STANDBY / OFF / ERROR, blinking REC) and FPS / resolution sit on gradient overlay bars: child windows (drawlists ignore `pos`) each holding a drawlist that paints the gradient, the capsule and the tile's rounded corners (corner masks in the canvas colour; Dear PyGui can't clip an image to a rounded rect). Bars are redrawn only on resize or theme change. Unassigned slots use the receding `tile_empty` style.
+- **Tile timestamps and timers:**
+  - The bottom bar starts with the wall-clock time of the frame on screen (`Frame.timestamp`, host time, `HH:MM:SS.mmm` via `status_bar.format_frame_time`), then FPS and frame id.
+  - A recording tile's badge shows its own timer, `REC  HH:MM:SS` (`RecordingService.camera_recording(id).elapsed_s`).
+  - The status bar lists every recording camera with its own time (serial number + `format_duration`), because cameras start recording independently.
 - **Camera Status:** one line per camera (fixed columns plus a stretch filler); it grows up to 6 rows, then scrolls.
 - **Layout, top to bottom:**
   - toolbar (title, live / REC / error pills, layout segmented control on the right);

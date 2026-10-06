@@ -1,6 +1,7 @@
 """Settings window: edits config.json and applies changes live where possible.
 
-Grouped form: each section is a caption over a card of label/control rows.
+Grouped form: each section is a caption over a card of label/control rows. Folder fields show the
+full path and have a Browse… button (native folder dialog, ``folder_picker``).
 """
 
 from __future__ import annotations
@@ -9,12 +10,14 @@ import copy
 import logging
 from collections.abc import Callable
 from contextlib import contextmanager
+from pathlib import Path
 
 import dearpygui.dearpygui as dpg
 
 from app.recording.recorder import RecordingMode
 from app.services.app_services import AppServices
 from app.services.configuration import save_config
+from app.ui.folder_picker import FolderPicker
 from app.ui.multiview import LAYOUTS
 from app.ui.theme import ACCENTS, COLORS, DEFAULT_ACCENT, bind, caption, nudge, secondary_text, use_font
 
@@ -23,28 +26,30 @@ logger = logging.getLogger(__name__)
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 LABEL_WIDTH = 190
 FIELD_WIDTH = 300
+BROWSE_WIDTH = 92
 
 
 class SettingsWindow:
     def __init__(self, services: AppServices, on_theme: Callable[[str], None],
-                 on_accent: Callable[[str], None] | None = None) -> None:
+                 on_accent: Callable[[str], None] | None = None, picker: FolderPicker | None = None) -> None:
         self._services = services
+        self._picker = picker or FolderPicker()
         self._on_theme = on_theme
         self._on_accent = on_accent
-        with dpg.window(label="Settings", width=580, height=660, show=False, pos=(300, 70), no_collapse=True) as self.window:
+        with dpg.window(label="Settings", width=680, height=660, show=False, pos=(300, 70), no_collapse=True) as self.window:
             with self._section("Appearance"):
                 self._theme = self._row("Theme", lambda: dpg.add_combo(["dark", "light"], width=FIELD_WIDTH))
                 self._accent = self._row("Accent colour", lambda: dpg.add_combo(list(ACCENTS), width=FIELD_WIDTH))
                 self._layout = self._row("Default layout", lambda: dpg.add_combo(list(LAYOUTS), width=FIELD_WIDTH))
             with self._section("Recording"):
-                self._rec_dir = self._row("Recordings folder", lambda: dpg.add_input_text(width=FIELD_WIDTH))
+                self._rec_dir = self._row("Recordings folder", lambda: self._folder_field("Recordings folder"))
                 self._rec_mode = self._row("Default mode", lambda: dpg.add_combo([m.value for m in RecordingMode],
                                                                                   width=FIELD_WIDTH))
                 self._queue = self._row("Queue (frames/camera)", lambda: dpg.add_input_int(
                     width=FIELD_WIDTH, min_value=4, min_clamped=True))
                 self._min_free = self._row("Stop below free GB", lambda: dpg.add_input_float(
                     width=FIELD_WIDTH, min_value=0, min_clamped=True, format="%.1f"))
-                self._snap_dir = self._row("Snapshots folder", lambda: dpg.add_input_text(width=FIELD_WIDTH))
+                self._snap_dir = self._row("Images folder", lambda: self._folder_field("Images (capture) folder"))
             with self._section("Cameras & logging"):
                 self._reconnect = self._row("Auto-reconnect", lambda: dpg.add_checkbox(label="Reconnect lost cameras"))
                 self._log_level = self._row("Log level", lambda: dpg.add_combo(LOG_LEVELS, width=FIELD_WIDTH))
@@ -54,7 +59,7 @@ class SettingsWindow:
                 dpg.add_button(label="Close", width=96, callback=lambda: dpg.hide_item(self.window))
                 self._message = dpg.add_text("")
             bind(save, "primary")
-            path = secondary_text(f"Saved to {services.config_path}", wrap=530)
+            path = secondary_text(f"Saved to {Path(services.config_path).resolve()}", wrap=630)
             use_font(path, "small")
 
     # --- form helpers ------------------------------------------------------------
@@ -73,6 +78,24 @@ class SettingsWindow:
         bind(table, "compact_table")
         dpg.add_spacer(height=4)
 
+    def _folder_field(self, title: str) -> int | str:
+        """Path text box + Browse… (native folder dialog); returns the text box."""
+        with dpg.group(horizontal=True):
+            field = dpg.add_input_text(width=-(BROWSE_WIDTH + 8))  # the path gets all remaining width
+            button = dpg.add_button(label="Browse…", width=BROWSE_WIDTH,
+                                    callback=lambda: self._browse(field, title))
+        with dpg.tooltip(button):
+            dpg.add_text("Choose the folder")
+        return field
+
+    def _browse(self, field: int | str, title: str) -> None:
+        self._picker.choose(f"Select the {title.lower()}", dpg.get_value(field).strip(),
+                            lambda path: dpg.set_value(field, path))
+
+    def update(self) -> None:
+        """Called every UI frame: hands a chosen folder back to its field."""
+        self._picker.poll()
+
     @staticmethod
     def _row(label: str, make):
         with dpg.table_row():
@@ -86,11 +109,11 @@ class SettingsWindow:
         dpg.set_value(self._theme, cfg["application"]["theme"])
         dpg.set_value(self._accent, cfg["application"].get("accent", DEFAULT_ACCENT))
         dpg.set_value(self._layout, cfg["application"]["default_layout"])
-        dpg.set_value(self._rec_dir, cfg["recording"]["directory"])
+        dpg.set_value(self._rec_dir, str(Path(cfg["recording"]["directory"]).resolve()))
         dpg.set_value(self._rec_mode, cfg["recording"]["mode"])
         dpg.set_value(self._queue, int(cfg["recording"]["queue_frames"]))
         dpg.set_value(self._min_free, float(cfg["recording"]["min_free_gb"]))
-        dpg.set_value(self._snap_dir, cfg["snapshots"]["directory"])
+        dpg.set_value(self._snap_dir, str(Path(cfg["snapshots"]["directory"]).resolve()))
         dpg.set_value(self._reconnect, bool(cfg["reconnect"]["enabled"]))
         dpg.set_value(self._log_level, cfg["logging"]["level"])
         dpg.set_value(self._message, "")

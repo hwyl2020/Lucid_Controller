@@ -33,6 +33,7 @@ from app.services.recording_service import RecordingError, RecordingService
 from app.ui import dialogs
 from app.ui import theme
 from app.ui.theme import COLORS, STATE_COLORS, STATE_NAMES, THEME_TEXT, bind, caption, secondary_text, use_font
+from app.ui.status_bar import format_duration
 from app.ui.widgets import Switch
 from app.camera_log import camera_logger
 
@@ -370,10 +371,9 @@ class CameraRow:
                            "On, not streaming · stream-locked settings can be changed")
         current = self._recording.camera_recording(self.camera_id)
         if current is not None:
-            minutes, seconds = divmod(int(current.elapsed_s), 60)
             st = current.stats
             dropped = st.frame_gaps + st.queue_overflows
-            self._set_text(self.rec_text, f"● REC {minutes:02d}:{seconds:02d} · {st.frames_written:,} frames"
+            self._set_text(self.rec_text, f"● REC {format_duration(current.elapsed_s)} · {st.frames_written:,} frames"
                            f" · {dropped} dropped", error=bool(dropped or st.error))
         values = ((f"{status.bandwidth_mbps:,.1f}", f"{status.fps:.2f}", f"{status.frame_count:,}")
                   if acquiring else (DASH, DASH, DASH))

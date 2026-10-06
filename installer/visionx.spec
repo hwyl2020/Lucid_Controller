@@ -16,7 +16,7 @@ a = Analysis(
     pathex=[str(ROOT)],
     datas=[(str(ROOT / "app" / "resources"), "app/resources")],
     hiddenimports=collect_submodules("arena_api") + collect_submodules("app"),
-    excludes=["tkinter", "matplotlib", "pytest", "IPython", "PIL", "PyInstaller"],
+    excludes=["matplotlib", "pytest", "IPython", "PIL", "PyInstaller"],  # tkinter: folder dialog
     noarchive=False,
 )
 pyz = PYZ(a.pure)
