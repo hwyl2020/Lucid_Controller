@@ -318,7 +318,7 @@ Recording output layout: `Recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_N
   - It warns if the Arena SDK registry key is missing, without blocking the install.
   - The optional firewall rule (admin installs only) is `netsh advfirewall`, and the uninstaller removes it. The uninstaller keeps user data.
   - **Keep `AppId` fixed**: upgrades depend on it. VisionX got a new AppId; the old Apertix test installs are a separate product, so uninstall them.
-  - Verified: a silent per-user install, launch (camera discovered) and uninstall.
+  - Verified: a silent per-user install, launch (camera discovered) and uninstall. Also a read-only install folder (like Program Files): it starts and uses `Documents\VisionX`. Before 0.1.2 that case hung at startup (`tempfile.TemporaryFile` retry loop), so `paths.is_writable` uses a single `os.open`.
 - **Target PC requirement:** the LUCID Arena SDK (64-bit) must be installed. The bundled `arena_api` finds `ArenaC_v140.dll` through the SDK's registry key (`HKLM\SOFTWARE\Lucid Vision Labs\Arena SDK`, `InstallFolder`), and the SDK also installs the GigE filter driver. The SDK's DLLs are not bundled: redistribution is not cleared and the driver needs an installer.
   - In the packaged app, a missing SDK shows an "Arena SDK not found" dialog, and no simulators are added unless `--simulators` is given.
 - **Data folder** (`app/paths.py`):

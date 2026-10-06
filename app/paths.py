@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
+import uuid
 from pathlib import Path
 
 from app import APP_NAME
@@ -28,11 +28,19 @@ def app_dir() -> Path:
 
 
 def is_writable(folder: Path) -> bool:
+    """Can files be created in ``folder``? (One attempt: tempfile.TemporaryFile retries a denied
+    create in an existing folder ~2**31 times on Windows, which hung the app under Program Files.)"""
+    probe = folder / f".write_test_{os.getpid()}_{uuid.uuid4().hex}"
     try:
-        with tempfile.TemporaryFile(dir=folder):
-            return True
+        fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except OSError:
         return False
+    os.close(fd)
+    try:
+        os.remove(probe)
+    except OSError:
+        pass
+    return True
 
 
 def data_dir() -> Path:

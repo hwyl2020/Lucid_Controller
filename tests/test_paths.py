@@ -30,3 +30,21 @@ def test_packaged_app_in_a_protected_folder_uses_documents(tmp_path, monkeypatch
 
 def test_icon_resource_is_shipped():
     assert paths.resource("app.ico").stat().st_size > 1000
+
+
+def test_unwritable_folder_is_detected_with_a_single_attempt(tmp_path, monkeypatch):
+    """Regression: tempfile.TemporaryFile looped ~forever on a denied folder (Program Files)."""
+    attempts = []
+
+    def denied(path, flags, *args):
+        attempts.append(path)
+        raise PermissionError(13, "Access is denied", str(path))
+
+    monkeypatch.setattr(paths.os, "open", denied)
+    assert paths.is_writable(tmp_path) is False
+    assert len(attempts) == 1
+
+
+def test_writable_probe_leaves_no_file(tmp_path):
+    assert paths.is_writable(tmp_path) is True
+    assert list(tmp_path.iterdir()) == []
