@@ -101,6 +101,8 @@ class MainWindow:
                             for name in ACCENTS
                         }
                 with dpg.menu(label="Cameras"):
+                    dpg.add_menu_item(label="Scan for cameras now", callback=lambda: services.discovery.scan_now(),
+                                      enabled=services.discovery.enabled)
                     self._reconnect_item = dpg.add_menu_item(
                         label="Auto-reconnect",
                         check=True,

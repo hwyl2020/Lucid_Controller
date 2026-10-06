@@ -24,6 +24,7 @@ from app.services.configuration import load_config
 from app.services.logging_service import setup_logging
 from app.services import log_buffer
 from app.services.app_services import AppServices
+from app.services.discovery_service import arena_scan
 from app.ui import dialogs
 from app.ui.main_window import APP_TITLE, MainWindow
 
@@ -109,7 +110,9 @@ def main() -> None:
         logger.info("No Arena cameras found; adding %d simulator cameras", simulators)
     add_simulators(manager, simulators)
 
-    services = AppServices.create(config, args.config, manager, logs)
+    # Hot-plug: cameras connected later are found by the discovery service (no restart needed).
+    discover = None if args.no_arena or sdk_error else arena_scan
+    services = AppServices.create(config, args.config, manager, logs, discover=discover)
     services.start()
 
     dpg.create_context()

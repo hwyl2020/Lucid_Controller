@@ -33,7 +33,8 @@ python -m venv --system-site-packages .venv
 - `config.json` (gitignored) is optional. It is merged over `DEFAULT_CONFIG` in `app/services/configuration.py`, so only overrides need to be written.
 - Logs go to `logs/apertix.log`, a rotating file.
 - pytest runs from the repo root, with `pythonpath = .` set in `pyproject.toml`.
-- **Startup:** the app discovers Arena cameras first. If none are found and `--simulators` is not given, it adds 4 simulators. Discovery takes about 1 s at startup.
+- **Startup:** the app discovers Arena cameras first. If none are found and `--simulators` is not given, it adds 4 simulators (none in the packaged app). Discovery takes about 1 s at startup.
+- **Hot-plug:** cameras connected later appear without a restart (see "Hot-plug discovery").
 - **Tests without hardware:**
   - `tests/fake_arena.py` is an in-memory fake of the `arena_api` surface that `ArenaCamera` uses.
   - `tests/test_arena_sdk_buffers.py` exercises the **real** installed SDK through `BufferFactory.create`, with no camera needed. It is skipped if the SDK is absent.
@@ -248,6 +249,19 @@ Platform-neutral, premium "camera workstation" look (Apple-level polish, not a m
   - Reset follows LUCID's "Reset Device Settings" example: `UserSetSelector = "Default"`, then `UserSetLoad.execute()`.
   - Verified on the TRI122S-C: changed exposure/gain/format/width, then Reset gave back the factory values (BayerRG8, 4024 wide, auto exposure, 0 dB); exporting and re-importing 305 features reproduced every change, and no Gev/DeviceUserID lines were exported. The camera offers the user sets Default, UserSet1 and UserSet2. Copying to a second physical camera is not tested yet.
 - **Simulator:** `SimulatorCamera` uses JSON of its settings and clamps them to its own sensor.
+
+### Hot-plug discovery (`app/services/discovery_service.py`)
+
+- **`DiscoveryService`** repeats the GigE discovery every 3 s on a background thread (`arena_scan`: `all_device_infos(400 ms)` → `ArenaCamera`). It adds cameras with an unknown serial to `CameraManager`.
+  - It never removes or touches known cameras: an unplugged camera keeps its row, and auto-reconnect covers cameras lost mid-stream.
+  - Cameras ▸ Scan for cameras now triggers a round immediately (`scan_now`).
+  - `main.py` passes `discover=arena_scan` to `AppServices.create` only when the SDK loaded (not with `--no-arena`). Shutdown stops discovery first.
+- **The UI follows `manager.camera_ids` each frame:**
+  - `CameraSidebar` adds rows; its empty-state text says cameras appear automatically.
+  - `MultiView._assign_new_cameras` fills free tiles without disturbing assigned ones.
+  - The status panel and log filter already rebuilt on id changes.
+- **`arena_sdk.SYSTEM_LOCK`** serialises SDK system calls (`device_infos`, `create_device`, `destroy_device`, `force_ip`, `interface_infos`), because discovery runs while cameras are being opened or re-addressed. `ArenaCamera.connect` holds it across listing and creating.
+- **Verified on the TRI122S-C:** found by discovery (first scan 1.6 s, including SDK start). Streaming 20 s with discovery every 1 s (3× the app's rate) gave 177 frames, 9.12 FPS, 0 missed, 0 timeouts.
 
 ### Force IP and stream-locked features
 

@@ -44,6 +44,7 @@ class MultiView:
         self._views: list[CameraView] = []
         self._rows: list[int | str] = []
         self._grid_size = (0, 0)
+        self._camera_ids: list[str] = []
         self._layout = layout if layout in LAYOUTS else "2x2"
         self._texture_registry = dpg.add_texture_registry()
         self._control: SegmentedControl | None = None
@@ -74,6 +75,8 @@ class MultiView:
         return next((v.display_fps for v in self._views if v.camera_id == camera_id), 0.0)
 
     def update(self) -> None:
+        if self._manager.camera_ids != self._camera_ids:
+            self._assign_new_cameras()  # hot-plug: a camera was added while running
         width, height = dpg.get_item_rect_size(self._grid)
         if (width, height) != self._grid_size and width > 0 and height > 0:
             self._grid_size = (width, height)
@@ -89,7 +92,7 @@ class MultiView:
         self._views, self._rows = [], []
 
         columns, rows = LAYOUTS[self._layout]
-        camera_ids = self._manager.camera_ids
+        camera_ids = self._camera_ids = self._manager.camera_ids
         for _ in range(rows):
             row = dpg.add_group(horizontal=True, horizontal_spacing=TILE_SPACING, parent=self._grid)
             self._rows.append(row)
@@ -99,6 +102,19 @@ class MultiView:
                 view.assign(camera_ids[index] if index < len(camera_ids) else None, self._manager)
                 self._views.append(view)
         self._resize_tiles()
+
+    def _assign_new_cameras(self) -> None:
+        """Put newly added cameras into the next free tiles; existing tiles keep their camera."""
+        camera_ids = self._manager.camera_ids
+        shown = {view.camera_id for view in self._views}
+        free = (view for view in self._views if view.camera_id is None)
+        for camera_id in camera_ids:
+            if camera_id not in shown:
+                view = next(free, None)
+                if view is None:
+                    break  # more cameras than tiles: a bigger layout shows them
+                view.assign(camera_id, self._manager)
+        self._camera_ids = camera_ids
 
     def _resize_tiles(self) -> None:
         width, height = self._grid_size

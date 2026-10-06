@@ -51,8 +51,9 @@ def discover_arena_cameras(timeout_ms: int = 1000) -> list[ArenaDeviceInfo]:
         logger.warning("%s; Arena cameras unavailable", exc)
         return []
     try:
-        sdk.system.DEVICE_INFOS_TIMEOUT_MILLISEC = int(timeout_ms)
-        infos = [ArenaDeviceInfo.from_sdk(info) for info in sdk.system.device_infos]
+        with arena_sdk.SYSTEM_LOCK:
+            sdk.system.DEVICE_INFOS_TIMEOUT_MILLISEC = int(timeout_ms)
+            infos = [ArenaDeviceInfo.from_sdk(info) for info in sdk.system.device_infos]
     except Exception as exc:  # noqa: BLE001 - SDK raises plain Exception
         raise CameraError(f"Camera discovery failed: {exc}") from exc
     for info in infos:
@@ -66,7 +67,8 @@ def host_interfaces() -> list[HostInterface]:
     """Host network adapters as seen by the Arena SDK (``system.interface_infos``)."""
     sdk = arena_sdk.load()
     try:
-        infos = sdk.system.interface_infos
+        with arena_sdk.SYSTEM_LOCK:
+            infos = sdk.system.interface_infos
     except Exception as exc:  # noqa: BLE001
         raise CameraError(f"Cannot list network adapters: {exc}") from exc
     return [
@@ -80,8 +82,9 @@ def all_device_infos(timeout_ms: int = 1000) -> list[ArenaDeviceInfo]:
     """Fresh discovery (also refreshes the SDK's device list used by create_device)."""
     sdk = arena_sdk.load()
     try:
-        sdk.system.DEVICE_INFOS_TIMEOUT_MILLISEC = int(timeout_ms)
-        return [ArenaDeviceInfo.from_sdk(info) for info in sdk.system.device_infos]
+        with arena_sdk.SYSTEM_LOCK:
+            sdk.system.DEVICE_INFOS_TIMEOUT_MILLISEC = int(timeout_ms)
+            return [ArenaDeviceInfo.from_sdk(info) for info in sdk.system.device_infos]
     except Exception as exc:  # noqa: BLE001
         raise CameraError(f"Camera discovery failed: {exc}") from exc
 
@@ -93,6 +96,7 @@ def force_ip(mac: str, ip: str, subnet_mask: str, gateway: str) -> None:
     """
     sdk = arena_sdk.load()
     try:
-        sdk.system.force_ip({"mac": mac, "ip": ip, "subnetmask": subnet_mask, "defaultgateway": gateway})
+        with arena_sdk.SYSTEM_LOCK:
+            sdk.system.force_ip({"mac": mac, "ip": ip, "subnetmask": subnet_mask, "defaultgateway": gateway})
     except Exception as exc:  # noqa: BLE001
         raise CameraError(f"Force IP to {ip} failed: {' '.join(str(exc).split())}") from exc

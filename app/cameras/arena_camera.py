@@ -144,19 +144,20 @@ class ArenaCamera(CameraDevice):
             except arena_sdk.ArenaSdkUnavailable as exc:
                 raise CameraError(str(exc)) from exc
 
-            try:
-                infos = sdk.system.device_infos  # refreshes the SDK's list; order is not stable
-            except Exception as exc:  # noqa: BLE001
-                raise CameraError(f"{self.camera_id}: discovery failed: {_short(exc)}") from exc
-            match = next((i for i in infos if i.get("mac") == self._info.mac), None)
-            if match is None:
-                raise CameraDisconnectedError(f"{self.camera_id}: not found on the network")
-            self._info = ArenaDeviceInfo.from_sdk(match)  # current IP (may differ after a power cycle)
+            with arena_sdk.SYSTEM_LOCK:  # no background discovery between listing and creating
+                try:
+                    infos = sdk.system.device_infos  # refreshes the SDK's list; order is not stable
+                except Exception as exc:  # noqa: BLE001
+                    raise CameraError(f"{self.camera_id}: discovery failed: {_short(exc)}") from exc
+                match = next((i for i in infos if i.get("mac") == self._info.mac), None)
+                if match is None:
+                    raise CameraDisconnectedError(f"{self.camera_id}: not found on the network")
+                self._info = ArenaDeviceInfo.from_sdk(match)  # current IP (may differ after a power cycle)
 
-            try:
-                self._device = sdk.system.create_device(match)[0]
-            except Exception as exc:  # noqa: BLE001
-                raise self._translate(exc, "connect") from exc
+                try:
+                    self._device = sdk.system.create_device(match)[0]
+                except Exception as exc:  # noqa: BLE001
+                    raise self._translate(exc, "connect") from exc
 
             for name, value in STREAM_SETTINGS.items():
                 self._try_set(self._device.tl_stream_nodemap, name, value)
@@ -624,7 +625,8 @@ class ArenaCamera(CameraDevice):
         if device is None:
             return
         try:
-            arena_sdk.load().system.destroy_device(device)
+            with arena_sdk.SYSTEM_LOCK:
+                arena_sdk.load().system.destroy_device(device)
             self._log.info("Closed %s S/N %s", self.model, self.serial_number)
         except Exception as exc:  # noqa: BLE001
             self._log.warning("%s: destroy_device failed: %s", self.camera_id, _short(exc))

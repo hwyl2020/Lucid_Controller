@@ -2,4 +2,4 @@
 
 APP_NAME = "Apertix"
 APP_PUBLISHER = "HWYL"
-__version__ = "0.1.0"
+__version__ = "0.1.1"
