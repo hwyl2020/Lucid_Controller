@@ -90,8 +90,7 @@ class Splitter:
 
     def __init__(self, parent: int | str | None, vertical: bool, get_size: Callable[[], float],
                  set_size: Callable[[float], None], minimum: float, maximum: Callable[[], float],
-                 sign: int = 1, thickness: int = 6, on_release: Callable[[float], None] | None = None,
-                 tooltip: str = "Drag to resize") -> None:
+                 sign: int = 1, thickness: int = 6, on_release: Callable[[float], None] | None = None) -> None:
         kw = {"parent": parent} if parent is not None else {}
         self.vertical = vertical
         self._get, self._set = get_size, set_size
@@ -102,8 +101,6 @@ class Splitter:
         self.button = dpg.add_button(label="", width=thickness if vertical else -1,
                                      height=-1 if vertical else thickness, **kw)
         theme.bind(self.button, "splitter")
-        with dpg.tooltip(self.button, delay=0.6):
-            dpg.add_text(tooltip)
 
     def clamp(self, size: float) -> int:
         return int(round(min(max(size, self._min), max(self._min, self._max()))))
@@ -132,7 +129,7 @@ class Splitter:
 
 class Switch:
     """Toggle switch. The image button keeps a text label ("ON"/"OFF"/pending text) that is not
-    drawn but describes the state (tests and tooltips read it)."""
+    drawn but describes the state (tests read it)."""
 
     def __init__(self, parent: int | str | None, callback: Callable[[], None], label: str = "OFF") -> None:
         kw = {"parent": parent} if parent is not None else {}

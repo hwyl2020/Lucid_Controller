@@ -89,8 +89,7 @@ class LogPanel:
         with dpg.group(parent=parent) as self.group:
             self.splitter = Splitter(None, vertical=False, get_size=self.body_height, set_size=self.set_body_height,
                                      minimum=MIN_BODY_HEIGHT, maximum=max_height, sign=-1,
-                                     on_release=lambda h: on_resized(int(h)) if on_resized else None,
-                                     tooltip="Drag to resize Logs")
+                                     on_release=lambda h: on_resized(int(h)) if on_resized else None)
             self.header = dpg.add_collapsing_header(label="Logs", default_open=default_open)
             use_font(self.header, "heading")
             with dpg.group(horizontal=True, parent=self.header):

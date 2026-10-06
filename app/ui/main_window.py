@@ -156,7 +156,6 @@ class MainWindow:
                     minimum=MIN_SIDEBAR_WIDTH,
                     maximum=lambda: dpg.get_viewport_client_width() - MIN_STREAM_WIDTH - 2 * SPACING,
                     thickness=SPLITTER, on_release=lambda w: self._save_ui("sidebar_width", int(w)),
-                    tooltip="Drag to resize the camera list",
                 )
                 with dpg.child_window(width=-1, height=-STATUS_HEIGHT - 8, no_scrollbar=True) as area:
                     self._area_window = area

@@ -106,8 +106,6 @@ class CameraRow:
             use_font(self.dot, "caption")
             bind(self.arrow, "ghost")
             bind(self.name, "quiet_selectable")
-            with dpg.tooltip(self.name):
-                dpg.add_text(f"{status.display_name}\nCamera ID: {self.camera_id}")
 
             with dpg.group(show=False) as self.panel:
                 dpg.add_separator()
@@ -124,10 +122,6 @@ class CameraRow:
                                                             callback=self.toggle_stream)
                 bind(power_row, "tight")
                 use_font(self.power_label, "heading")
-                with dpg.tooltip(self.power_button):
-                    dpg.add_text("Turn the camera on (open it) or off (close it)")
-                with dpg.tooltip(self.stream_button):
-                    self.stream_tip = dpg.add_text("Start streaming")
                 self.acq_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
                 use_font(self.acq_text, "small")
 
@@ -342,8 +336,6 @@ class CameraRow:
             dpg.configure_item(self.stream_button, label=STREAM_LABELS[acquiring],
                                enabled=camera_on and pending is None)
             self._bind(self.stream_button, None if acquiring or not camera_on else "primary")
-            dpg.set_value(self.stream_tip, "Stop streaming" if acquiring else
-                          ("Start streaming" if camera_on else "Turn the camera on first"))
         dpg.configure_item(self.rec_button, label="■  Stop recording" if recording else "●  Record",
                            enabled=acquiring or recording)
         self._bind(self.rec_button, "danger" if recording else ("record_idle" if acquiring else None))

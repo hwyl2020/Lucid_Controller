@@ -49,11 +49,6 @@ class SettingsWindow:
                     width=FIELD_WIDTH, min_value=4, min_clamped=True))
                 self._metadata = self._row("Recording info files", lambda: dpg.add_checkbox(
                     label="Save timestamps and session info"))
-                with dpg.tooltip(self._metadata):
-                    dpg.add_text("On: each recording also gets frames.csv (camera frame number and arrival time\n"
-                                 "of every frame) and session.json (camera settings, start/stop, frame counts).\n"
-                                 "Off: video recordings are just the video file. Raw recordings always keep\n"
-                                 "frames.csv, which is needed to read frames.raw back.")
                 self._min_free = self._row("Stop below free GB", lambda: dpg.add_input_float(
                     width=FIELD_WIDTH, min_value=0, min_clamped=True, format="%.1f"))
                 self._snap_dir = self._row("Images folder", lambda: self._folder_field("Images (capture) folder"))
@@ -91,8 +86,6 @@ class SettingsWindow:
             field = dpg.add_input_text(width=-(BROWSE_WIDTH + 8))  # the path gets all remaining width
             button = dpg.add_button(label="Browse…", width=BROWSE_WIDTH,
                                     callback=lambda: self._browse(field, title))
-        with dpg.tooltip(button):
-            dpg.add_text("Choose the folder")
         return field
 
     def _browse(self, field: int | str, title: str) -> None:

@@ -88,7 +88,7 @@ class StatusPanel:
         with dpg.group(parent=parent) as self.group:
             self.splitter = Splitter(None, vertical=False, get_size=self.body_height, set_size=self._drag_to,
                                      minimum=MIN_BODY_HEIGHT, maximum=max_height, sign=-1,
-                                     on_release=self._released, tooltip="Drag to resize Camera Status")
+                                     on_release=self._released)
             self.header = dpg.add_collapsing_header(label="Camera Status", default_open=default_open)
             use_font(self.header, "heading")
             with dpg.child_window(parent=self.header, height=HEADER_ROW_HEIGHT + ROW_HEIGHT + BODY_PADDING,

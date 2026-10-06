@@ -101,11 +101,6 @@ class PropertyGridWindow:
                 self._reset_button = dpg.add_button(label="Reset to defaults…", callback=self._confirm_reset)
                 self._profiles_button = dpg.add_button(label="Profiles…", show=profiles is not None)
             bind(self._apply_all_button, "primary")
-            with dpg.tooltip(self._apply_all_button):
-                dpg.add_text("Copy this camera's current settings to every other camera that is on.\n"
-                             "Network settings (IP) and the camera's user name are not copied.")
-            with dpg.tooltip(self._reset_button):
-                dpg.add_text("Restore this camera's factory default settings (its 'Default' user set).")
             with dpg.popup(self._profiles_button, mousebutton=dpg.mvMouseButton_Left):
                 dpg.add_menu_item(label="Save settings as profile…", callback=self._save_profile)
                 dpg.add_menu_item(label="Apply profile…", callback=self._apply_profile)

@@ -207,6 +207,7 @@ Platform-neutral, premium "camera workstation" look (Apple-level polish, not a m
 - **Shapes and spacing:** 4/8 px grid; controls radius 8, cards 10-12, pills fully round; item spacing 8; window padding 16×14.
 - **States:** bind role themes only when the state changes (`CameraRow._bind`), never per frame. Disabled widgets get an explicit `enabled_state=False` component in the global theme.
 - **Vocabulary:** camera states read Off / Standby / Live / Error everywhere (`STATE_NAMES`).
+- **No hover tooltips** (removed on request): don't add help tooltips to controls. The only exception is the Property Grid's per-feature info (name, type, access, range, description).
 - **Glyphs:** Segoe UI has ● ► ■ · × — … but not U+22EE or U+25B6; check any new glyph before use.
 - **Texture sizing:** textures are sized from the image as displayed (`camera_view.texture_side_for`), not from the tile's longest side. The old rule converted about 20× more pixels than shown in short tiles. With 4 simulators and both sections open, multiview cost went from 52 ms to 4 ms per frame.
 
