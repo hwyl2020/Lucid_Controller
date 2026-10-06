@@ -1,7 +1,8 @@
 """One camera in the sidebar list: a card with a header line plus its own expandable control panel.
 
 Header:  [disclosure] [state dot] Model (Serial), then IP · state
-Panel (this camera only): power switch + stream button, video recording (format + record),
+Panel (this camera only): power switch + stream button, video recording (format + record, and a
+"Timestamp on video" switch that burns the real-time timestamp into video recordings),
 image capture (format + capture), live statistics and the Property Grid button.
 
 Power and streaming are separate on purpose: with the camera ON but not streaming, settings that the
@@ -51,6 +52,8 @@ DETAILS_REFRESH_S = 0.2
 DASH = "—"
 VIDEO_FORMATS = {mode.label: mode for mode in RecordingMode}
 IMAGE_FORMAT_LABELS = {label: key for key, (_ext, label) in IMAGE_FORMATS.items()}
+STAMP_LABEL = "Timestamp on video"
+STAMP_RAW_LABEL = "Timestamp: in frames.csv for Raw"
 
 
 def _borderless_table(**kwargs) -> int | str:
@@ -86,6 +89,7 @@ class CameraRow:
         self._last_details = 0.0
         self._bound: dict[int | str, str | None] = {}  # item -> bound role (rebind only on change)
         self._dot_key: tuple | None = None
+        self.timestamp_on = recording.timestamp_overlay  # burn the timestamp into this camera's videos
 
         with dpg.child_window(parent=parent, auto_resize_y=True, no_scrollbar=True) as self.card:
             with dpg.group() as title_stack:  # no gap between the name line and the IP line
@@ -130,6 +134,12 @@ class CameraRow:
                     self.video_format = dpg.add_combo(list(VIDEO_FORMATS), default_value=recording.default_mode.label,
                                                       width=CONTROL_WIDTH)
                     self.rec_button = dpg.add_button(label="●  Record", width=-1, callback=self.toggle_recording)
+                with dpg.group(horizontal=True, horizontal_spacing=10):
+                    self._stamp_switch = Switch(None, self.toggle_timestamp)
+                    self.stamp_button = self._stamp_switch.button
+                    with theme.nudge(2):
+                        self.stamp_label = dpg.add_text(STAMP_LABEL)
+                use_font(self.stamp_label, "small")
                 self.rec_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
                 use_font(self.rec_text, "small")
 
@@ -280,9 +290,14 @@ class CameraRow:
                                error=bool(dropped))
             else:
                 mode = VIDEO_FORMATS[dpg.get_value(self.video_format)]
-                self._recording.start(mode, [self.camera_id])
+                self._recording.start(mode, [self.camera_id], timestamp_overlay=self.timestamp_on)
         except (RecordingError, CameraError, OSError) as exc:
             self._set_text(self.rec_text, str(exc), error=True)
+
+    def toggle_timestamp(self) -> None:
+        """Burn (or not) the real-time timestamp into this camera's next video recording."""
+        if not self._recording.is_recording(self.camera_id):
+            self.timestamp_on = not self.timestamp_on
 
     def capture(self) -> None:
         image_format = IMAGE_FORMAT_LABELS[dpg.get_value(self.image_format)]
@@ -340,6 +355,13 @@ class CameraRow:
                            enabled=acquiring or recording)
         self._bind(self.rec_button, "danger" if recording else ("record_idle" if acquiring else None))
         dpg.configure_item(self.video_format, enabled=not recording)
+        raw = VIDEO_FORMATS[dpg.get_value(self.video_format)] is RecordingMode.RAW
+        # Raw frames are never altered (their timestamps are in frames.csv); fixed while recording.
+        self._stamp_switch.set(self.timestamp_on and not raw, not recording and not raw,
+                               "ON" if self.timestamp_on and not raw else "OFF")
+        stamp_label = STAMP_RAW_LABEL if raw else STAMP_LABEL
+        if dpg.get_value(self.stamp_label) != stamp_label:
+            dpg.set_value(self.stamp_label, stamp_label)
         dpg.configure_item(self.capture_button, enabled=acquiring)
 
         now = time.monotonic()

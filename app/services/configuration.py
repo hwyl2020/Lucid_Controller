@@ -34,6 +34,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # recording. Off: video recordings are just the video file. Raw always keeps frames.csv
         # (it is the index needed to read frames.raw back).
         "save_metadata": False,
+        # Burn each frame's real-time timestamp into video recordings (per-camera switch in the
+        # camera row; this is its starting value). Raw frames are never altered.
+        "timestamp_overlay": True,
     },
     "snapshots": {
         "directory": "snapshots",

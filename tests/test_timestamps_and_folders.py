@@ -155,3 +155,80 @@ def test_settings_metadata_checkbox_round_trip(tmp_path):
         assert services.recording._save_metadata is True
     finally:
         dpg.destroy_context()
+
+
+# --- timestamp burned into video recordings ---------------------------------------------
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+
+from app.acquisition.frame import Frame  # noqa: E402
+from app.recording.recorder import RecordingMode  # noqa: E402
+from app.recording.video_writer import VideoFileWriter, draw_timestamp, stamp_text  # noqa: E402
+
+
+def test_stamp_text_has_date_time_and_milliseconds():
+    ts = time.mktime((2026, 10, 6, 15, 32, 4, 0, 0, -1)) + 0.047
+    assert stamp_text(ts) == "2026-10-06 15:32:04.047"
+
+
+def test_draw_timestamp_marks_only_the_top_left_corner():
+    rgb = np.full((760, 1000, 3), 128, np.uint8)
+    draw_timestamp(rgb, time.time())
+    assert (rgb[:60, :500] != 128).any()  # box and text
+    assert (rgb[200:, :] == 128).all() and (rgb[:, 700:] == 128).all()
+
+
+def _rgb_frame(i):
+    data = np.full((240, 320, 3), 100, np.uint8)
+    return Frame(camera_id="A", frame_id=i, timestamp=time.time(), width=320, height=240,
+                 pixel_format="RGB8", data=data)
+
+
+@pytest.mark.parametrize("stamp", [True, False])
+def test_video_writer_burns_the_timestamp_only_when_asked(tmp_path, stamp):
+    writer = VideoFileWriter(tmp_path, fps=10, container="avi", index=False, stamp=stamp)
+    frames = [_rgb_frame(i) for i in range(3)]
+    for frame in frames:
+        writer.write(frame)
+    writer.close()
+    assert all((f.data == 100).all() for f in frames)  # the camera frames are never drawn on
+    capture = cv2.VideoCapture(str(tmp_path / "video.avi"))
+    ok, image = capture.read()
+    capture.release()
+    assert ok
+    corner = image[:20, :80].astype(int)
+    assert bool(abs(corner - 100).max() > 60) is stamp  # dark box + white text only when stamped
+
+
+def test_camera_row_timestamp_switch(tmp_path):
+    from app.services.network_service import NetworkService
+    from app.ui.camera_sidebar import CameraSidebar
+    from app.services.camera_status_service import CameraStatusService
+
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg["recording"]["directory"] = str(tmp_path / "rec")
+    manager = CameraManager(frame_timeout=0.1)
+    manager.add_camera(SimulatorCamera(SimulatorConfig(camera_id="A", width=160, height=120, fps=30)))
+    recording = RecordingService(manager, cfg)
+    dpg.create_context()
+    try:
+        with dpg.window():
+            with dpg.group() as parent:
+                pass
+        row = CameraSidebar(parent, manager, CameraStatusService(manager), recording, NetworkService(manager),
+                            on_property_grid=lambda cid: None).rows["A"]
+        assert row.timestamp_on is True  # on by default
+        dpg.set_value(row.video_format, RecordingMode.VIDEO.label)
+        row.update()
+        assert dpg.get_item_label(row.stamp_button) == "ON"
+        row.toggle_timestamp()
+        row.update()
+        assert dpg.get_item_label(row.stamp_button) == "OFF" and row.timestamp_on is False
+        dpg.set_value(row.video_format, RecordingMode.RAW.label)
+        row.update()
+        assert not dpg.get_item_configuration(row.stamp_button)["enabled"]  # raw is never altered
+        assert dpg.get_value(row.stamp_label).startswith("Timestamp: in frames.csv")
+    finally:
+        recording.stop()
+        manager.shutdown()
+        dpg.destroy_context()

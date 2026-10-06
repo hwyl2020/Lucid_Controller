@@ -110,6 +110,7 @@ class RecordingService:
             self._min_free_bytes = int(float(rec_cfg["min_free_gb"]) * 1e9)
             self.default_mode = RecordingMode(rec_cfg["mode"])
             self._save_metadata = bool(rec_cfg.get("save_metadata", False))
+            self.timestamp_overlay = bool(rec_cfg.get("timestamp_overlay", True))
             self._last_disk_check = 0.0
 
     # --- recording ----------------------------------------------------------
@@ -129,8 +130,12 @@ class RecordingService:
             return CameraRecording(session.mode, session.directory / session.camera_dirs[camera_id],
                                    time.time() - session.started, session.recorders[camera_id].stats())
 
-    def start(self, mode: RecordingMode | None = None, camera_ids: list[str] | None = None) -> Path:
+    def start(self, mode: RecordingMode | None = None, camera_ids: list[str] | None = None,
+              timestamp_overlay: bool | None = None) -> Path:
         """Start a session for ``camera_ids`` (default: all streaming cameras not already recording).
+
+        ``timestamp_overlay``: burn the real-time timestamp into video frames (default: the
+        ``recording.timestamp_overlay`` setting). Ignored for raw, which is never altered.
 
         Returns the session directory. Other cameras' recordings are not affected.
         """
@@ -155,6 +160,7 @@ class RecordingService:
                 raise RecordingError(f"Not enough free disk space ({free / 1e9:.1f} GB)")
 
             started = time.time()
+            stamp = self.timestamp_overlay if timestamp_overlay is None else bool(timestamp_overlay)
             directory = self._new_session_dir(started)
             recorders: dict[str, CameraRecorder] = {}
             camera_dirs: dict[str, str] = {}
@@ -163,11 +169,13 @@ class RecordingService:
                 camera = self._manager.camera(camera_id)
                 camera_dir = f"Camera_{index:02d}"
                 metadata[camera_id] = camera_metadata(camera)
+                if mode is not RecordingMode.RAW:
+                    metadata[camera_id]["timestamp_overlay"] = stamp
                 writer = (
                     RawSequenceWriter(directory / camera_dir)
                     if mode is RecordingMode.RAW
                     else VideoFileWriter(directory / camera_dir, fps=camera.frame_rate or 30.0, container=_CONTAINER[mode],
-                                         index=self._save_metadata)
+                                         index=self._save_metadata, stamp=stamp)
                 )
                 recorder = CameraRecorder(camera_id, writer, RecordingQueue(self._queue_frames))
                 recorder.start()

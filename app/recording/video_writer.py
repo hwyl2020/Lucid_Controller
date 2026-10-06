@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import csv
 import os
+import time
 from pathlib import Path
+
+import numpy as np
 
 import cv2
 
@@ -27,12 +30,40 @@ CONTAINERS = {
 INDEX_FILE = "frames.csv"
 
 
+def stamp_text(timestamp: float) -> str:
+    """Burned-in timestamp: local date and time with milliseconds, e.g. 2026-10-06 15:32:04.047."""
+    millis = int(round((timestamp % 1) * 1000))
+    if millis == 1000:
+        timestamp, millis = timestamp + 1, 0
+    return f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}.{millis:03d}"
+
+
+def draw_timestamp(rgb: np.ndarray, timestamp: float) -> None:
+    """Burn the frame's timestamp into the top-left corner (white on a dark box), in place.
+    Sized to the frame (~3% of its height) so it stays readable at any resolution."""
+    height, width = rgb.shape[:2]
+    text = stamp_text(timestamp)
+    scale = max(0.4, height / 760)
+    thickness = max(1, round(scale * 1.6))
+    (text_w, text_h), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+    pad = max(4, int(text_h * 0.45))
+    x0, y0 = pad, pad
+    x1, y1 = min(width - 1, x0 + text_w + 2 * pad), min(height - 1, y0 + text_h + baseline + 2 * pad)
+    box = rgb[y0:y1, x0:x1]
+    box[:] = (box * 0.35).astype(rgb.dtype)  # darken behind the text
+    cv2.putText(rgb, text, (x0 + pad, y0 + pad + text_h), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255),
+                thickness, cv2.LINE_AA)
+
+
 class VideoFileWriter:
     """``write`` returns how much the video file grew (compressed bytes on disk, not the size of the
     frame going in); ``total_bytes`` is the final file size once closed. ``index``: also write
-    frames.csv (video frame -> camera frame id + timestamp)."""
+    frames.csv (video frame -> camera frame id + timestamp). ``stamp``: burn each frame's real-time
+    timestamp into the picture."""
 
-    def __init__(self, directory: Path, fps: float, container: str = "mp4", index: bool = True) -> None:
+    def __init__(self, directory: Path, fps: float, container: str = "mp4", index: bool = True,
+                 stamp: bool = False) -> None:
+        self._stamp = stamp
         directory.mkdir(parents=True, exist_ok=True)
         extension, self._fourcc = CONTAINERS[container]
         self._path = directory / f"video.{extension}"
@@ -51,6 +82,10 @@ class VideoFileWriter:
         if not frame.pixel_format.startswith("Bayer"):
             rgb = cv2.resize(rgb, (max(2, frame.width // 2), max(2, frame.height // 2)), interpolation=cv2.INTER_AREA)
         height, width = rgb.shape[:2]
+        if self._stamp:
+            if np.shares_memory(rgb, frame.data) or not rgb.flags.writeable:
+                rgb = rgb.copy()  # never draw into the camera frame (display/snapshots share it)
+            draw_timestamp(rgb, frame.timestamp)
         if self._writer is None:
             self._size = (width, height)
             self._writer = cv2.VideoWriter(str(self._path), cv2.VideoWriter_fourcc(*self._fourcc), self._fps, self._size)

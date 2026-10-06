@@ -127,6 +127,11 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
   - Off: a video recording is just `video.<ext>`, with no `session.json`.
   - Raw always writes `frames.csv`, because it is the index needed to read `frames.raw`.
   - The setting is captured per session at start (`_Session.save_metadata`).
+- **Burned-in timestamp (video only):**
+  - `VideoFileWriter(stamp=True)` draws the frame's real-time timestamp (`Frame.timestamp`, local `YYYY-MM-DD HH:MM:SS.mmm`) top-left, white on a darkened box, about 3% of the frame height (`video_writer.draw_timestamp`).
+  - It draws on a copy, never on the camera frame (`np.shares_memory` guard), because display and snapshots share it.
+  - Each camera row has a **"Timestamp on video"** switch, on by default (`recording.timestamp_overlay`) and per camera. It is passed as `RecordingService.start(..., timestamp_overlay=)` and stored in session.json metadata.
+  - The switch is disabled while recording and for Raw: raw frames are never altered, and their timestamps are in `frames.csv`.
 - **Sizes:** for video, `bytes_written` is the compressed file on disk. `VideoFileWriter.write` returns the file's growth, and `CameraRecorder` sets the final `total_bytes` after close. It used to count the input frame bytes (0.55 GB reported for a 1.3 MB MP4).
 - **Disk space:** `status()` is polled every UI frame. It checks free space at most once a second and auto-stops below `recording.min_free_gb`.
 - **Per-camera pipeline:** `AcquisitionWorker` puts frames on a bounded `RecordingQueue`, and a `CameraRecorder` thread drains it into a writer.
