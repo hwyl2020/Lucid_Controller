@@ -122,6 +122,12 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 ### Recording and snapshots
 
 - **`RecordingService`** (`app/services/recording_service.py`) is the UI's entry point. It creates `recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_NN/` plus `session.json` (app version, mode, start/stop times, per-camera metadata and frame/drop counts).
+- **Info files** (`recording.save_metadata`, Settings ▸ "Recording info files", **off by default**):
+  - On: each camera folder also gets `frames.csv` (video frame → camera frame id + timestamp), and the session gets `session.json`.
+  - Off: a video recording is just `video.<ext>`, with no `session.json`.
+  - Raw always writes `frames.csv`, because it is the index needed to read `frames.raw`.
+  - The setting is captured per session at start (`_Session.save_metadata`).
+- **Sizes:** for video, `bytes_written` is the compressed file on disk. `VideoFileWriter.write` returns the file's growth, and `CameraRecorder` sets the final `total_bytes` after close. It used to count the input frame bytes (0.55 GB reported for a 1.3 MB MP4).
 - **Disk space:** `status()` is polled every UI frame. It checks free space at most once a second and auto-stops below `recording.min_free_gb`.
 - **Per-camera pipeline:** `AcquisitionWorker` puts frames on a bounded `RecordingQueue`, and a `CameraRecorder` thread drains it into a writer.
   - Queues are registered on `CameraManager` (`set_recording_queue`), not just on the worker, so recording survives the stream restarts done by pixel-format/ROI changes.

@@ -47,6 +47,13 @@ class SettingsWindow:
                                                                                   width=FIELD_WIDTH))
                 self._queue = self._row("Queue (frames/camera)", lambda: dpg.add_input_int(
                     width=FIELD_WIDTH, min_value=4, min_clamped=True))
+                self._metadata = self._row("Recording info files", lambda: dpg.add_checkbox(
+                    label="Save timestamps and session info"))
+                with dpg.tooltip(self._metadata):
+                    dpg.add_text("On: each recording also gets frames.csv (camera frame number and arrival time\n"
+                                 "of every frame) and session.json (camera settings, start/stop, frame counts).\n"
+                                 "Off: video recordings are just the video file. Raw recordings always keep\n"
+                                 "frames.csv, which is needed to read frames.raw back.")
                 self._min_free = self._row("Stop below free GB", lambda: dpg.add_input_float(
                     width=FIELD_WIDTH, min_value=0, min_clamped=True, format="%.1f"))
                 self._snap_dir = self._row("Images folder", lambda: self._folder_field("Images (capture) folder"))
@@ -113,6 +120,7 @@ class SettingsWindow:
         dpg.set_value(self._rec_mode, cfg["recording"]["mode"])
         dpg.set_value(self._queue, int(cfg["recording"]["queue_frames"]))
         dpg.set_value(self._min_free, float(cfg["recording"]["min_free_gb"]))
+        dpg.set_value(self._metadata, bool(cfg["recording"].get("save_metadata", False)))
         dpg.set_value(self._snap_dir, str(Path(cfg["snapshots"]["directory"]).resolve()))
         dpg.set_value(self._reconnect, bool(cfg["reconnect"]["enabled"]))
         dpg.set_value(self._log_level, cfg["logging"]["level"])
@@ -130,6 +138,7 @@ class SettingsWindow:
         new["recording"]["mode"] = dpg.get_value(self._rec_mode)
         new["recording"]["queue_frames"] = max(4, int(dpg.get_value(self._queue)))
         new["recording"]["min_free_gb"] = max(0.0, float(dpg.get_value(self._min_free)))
+        new["recording"]["save_metadata"] = bool(dpg.get_value(self._metadata))
         new["snapshots"]["directory"] = dpg.get_value(self._snap_dir).strip() or "snapshots"
         new["reconnect"]["enabled"] = bool(dpg.get_value(self._reconnect))
         new["logging"]["level"] = dpg.get_value(self._log_level)

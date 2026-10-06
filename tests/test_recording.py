@@ -138,7 +138,8 @@ def service(tmp_path):
         manager.add_camera(SimulatorCamera(SimulatorConfig(camera_id=f"SIM-{i}", width=160, height=120, fps=60)))
     config = {
         **DEFAULT_CONFIG,
-        "recording": {**DEFAULT_CONFIG["recording"], "directory": str(tmp_path / "rec"), "min_free_gb": 0},
+        "recording": {**DEFAULT_CONFIG["recording"], "directory": str(tmp_path / "rec"), "min_free_gb": 0,
+                      "save_metadata": True},  # most tests inspect session.json
         "snapshots": {"directory": str(tmp_path / "snap")},
     }
     svc = RecordingService(manager, config)
@@ -214,6 +215,40 @@ def test_video_session(service):
     capture = cv2.VideoCapture(str(session_dir / "Camera_01" / "video.mp4"))
     assert capture.isOpened() and int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) >= 10
     capture.release()
+
+
+def test_video_session_without_metadata_is_just_the_video(service):
+    """Default (save_metadata off): video.mp4 only, and the size shown is the real file size."""
+    manager, svc = service
+    svc._save_metadata = False
+    stream_all(manager)
+    session_dir = svc.start(RecordingMode.VIDEO, ["SIM-2"])
+    assert wait_until(lambda: svc.status().frames_written >= 10)
+    stats = svc.stop().cameras["SIM-2"]
+    camera_dir = session_dir / "Camera_01"
+    assert sorted(p.name for p in camera_dir.iterdir()) == ["video.mp4"]
+    assert not (session_dir / "session.json").exists()
+    assert stats.bytes_written == (camera_dir / "video.mp4").stat().st_size
+
+
+def test_raw_without_metadata_keeps_its_index(service):
+    manager, svc = service
+    svc._save_metadata = False
+    stream_all(manager)
+    session_dir = svc.start(RecordingMode.RAW, ["SIM-1"])
+    assert wait_until(lambda: svc.status().frames_written >= 5)
+    svc.stop()
+    camera_dir = session_dir / "Camera_01"
+    assert sorted(p.name for p in camera_dir.iterdir()) == ["frames.csv", "frames.raw"]  # csv is the index
+    assert not (session_dir / "session.json").exists()
+    assert len(list(read_raw_sequence(camera_dir))) >= 5
+
+
+def test_metadata_setting_comes_from_config(service):
+    _, svc = service
+    assert svc._save_metadata is True
+    svc.reconfigure({**DEFAULT_CONFIG, "snapshots": {"directory": "snap"}})
+    assert svc._save_metadata is False  # off by default
 
 
 def test_refuses_to_start_when_disk_low(service, monkeypatch):

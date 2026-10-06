@@ -30,6 +30,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "mode": "raw",  # "raw" (lossless, full resolution) or "video" (half-resolution MP4)
         "queue_frames": 64,  # per camera; 64 x 12 MP BayerRG8 is ~780 MB of RAM
         "min_free_gb": 2.0,  # recording stops before the disk fills up
+        # frames.csv (per-frame id + timestamp) and session.json (settings, counts) next to each
+        # recording. Off: video recordings are just the video file. Raw always keeps frames.csv
+        # (it is the index needed to read frames.raw back).
+        "save_metadata": False,
     },
     "snapshots": {
         "directory": "snapshots",

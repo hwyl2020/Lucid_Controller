@@ -166,6 +166,10 @@ class CameraRecorder:
                 self._writer.close()
             except Exception as exc:  # noqa: BLE001
                 self._log.error("Closing recording for %s failed: %s", self.camera_id, exc)
+            total = getattr(self._writer, "total_bytes", None)  # video: the real (compressed) file size
+            if total is not None:
+                with self._lock:
+                    self._stats = replace(self._stats, bytes_written=total)
 
     def _gap_before(self, frame_id: int) -> int:
         last, self._last_frame_id = self._last_frame_id, frame_id

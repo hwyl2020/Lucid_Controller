@@ -8,6 +8,7 @@ Measured on the dev PC: mp4v encodes a full 12 MP frame in ~92 ms (max ~11 FPS, 
 from __future__ import annotations
 
 import csv
+import os
 from pathlib import Path
 
 import cv2
@@ -27,17 +28,23 @@ INDEX_FILE = "frames.csv"
 
 
 class VideoFileWriter:
-    def __init__(self, directory: Path, fps: float, container: str = "mp4") -> None:
+    """``write`` returns how much the video file grew (compressed bytes on disk, not the size of the
+    frame going in); ``total_bytes`` is the final file size once closed. ``index``: also write
+    frames.csv (video frame -> camera frame id + timestamp)."""
+
+    def __init__(self, directory: Path, fps: float, container: str = "mp4", index: bool = True) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         extension, self._fourcc = CONTAINERS[container]
         self._path = directory / f"video.{extension}"
         self._fps = max(float(fps), 1.0)
         self._writer: cv2.VideoWriter | None = None
         self._size: tuple[int, int] | None = None
-        self._index_file = open(directory / INDEX_FILE, "w", newline="", encoding="utf-8")
-        self._index = csv.writer(self._index_file)
-        self._index.writerow(("video_frame", "frame_id", "timestamp"))
+        self._index_file = open(directory / INDEX_FILE, "w", newline="", encoding="utf-8") if index else None
+        self._index = csv.writer(self._index_file) if self._index_file else None
+        if self._index:
+            self._index.writerow(("video_frame", "frame_id", "timestamp"))
         self._count = 0
+        self._reported = 0  # file size already reported through write()
 
     def write(self, frame: Frame) -> int:
         rgb = to_rgb8(frame, full_resolution=False)
@@ -55,9 +62,27 @@ class VideoFileWriter:
                 "video recording cannot continue (use raw mode to record ROI changes)"
             )
         self._writer.write(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
-        self._index.writerow((self._count, frame.frame_id, f"{frame.timestamp:.6f}"))
+        if self._index:
+            self._index.writerow((self._count, frame.frame_id, f"{frame.timestamp:.6f}"))
         self._count += 1
-        return rgb.nbytes
+        return self._grown()
+
+    def _grown(self) -> int:
+        """Bytes the encoder has written to the file since the last call (it writes in chunks)."""
+        try:
+            size = os.path.getsize(self._path)
+        except OSError:
+            return 0
+        grown, self._reported = max(0, size - self._reported), max(size, self._reported)
+        return grown
+
+    @property
+    def total_bytes(self) -> int:
+        """Size of the video file on disk (final once closed)."""
+        try:
+            return os.path.getsize(self._path)
+        except OSError:
+            return self._reported
 
     @property
     def path(self) -> Path:
@@ -66,4 +91,5 @@ class VideoFileWriter:
     def close(self) -> None:
         if self._writer is not None:
             self._writer.release()
-        self._index_file.close()
+        if self._index_file:
+            self._index_file.close()

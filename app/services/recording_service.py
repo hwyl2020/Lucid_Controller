@@ -84,6 +84,7 @@ class _Session:
     camera_dirs: dict[str, str]
     metadata: dict[str, dict]
     final_stats: dict[str, RecorderStats] = field(default_factory=dict)  # cameras already stopped
+    save_metadata: bool = False  # frames.csv for video + session.json (setting at start time)
 
     @property
     def active_cameras(self) -> list[str]:
@@ -108,6 +109,7 @@ class RecordingService:
             self._queue_frames = int(rec_cfg["queue_frames"])
             self._min_free_bytes = int(float(rec_cfg["min_free_gb"]) * 1e9)
             self.default_mode = RecordingMode(rec_cfg["mode"])
+            self._save_metadata = bool(rec_cfg.get("save_metadata", False))
             self._last_disk_check = 0.0
 
     # --- recording ----------------------------------------------------------
@@ -164,13 +166,15 @@ class RecordingService:
                 writer = (
                     RawSequenceWriter(directory / camera_dir)
                     if mode is RecordingMode.RAW
-                    else VideoFileWriter(directory / camera_dir, fps=camera.frame_rate or 30.0, container=_CONTAINER[mode])
+                    else VideoFileWriter(directory / camera_dir, fps=camera.frame_rate or 30.0, container=_CONTAINER[mode],
+                                         index=self._save_metadata)
                 )
                 recorder = CameraRecorder(camera_id, writer, RecordingQueue(self._queue_frames))
                 recorder.start()
                 recorders[camera_id] = recorder
                 camera_dirs[camera_id] = camera_dir
-            session = _Session(mode, directory, started, recorders, camera_dirs, metadata)
+            session = _Session(mode, directory, started, recorders, camera_dirs, metadata,
+                               save_metadata=self._save_metadata)
             self._sessions.append(session)
             self._last_error = None
             self._write_session_json(session)
@@ -269,6 +273,8 @@ class RecordingService:
         return self._free_bytes
 
     def _write_session_json(self, session: _Session, stopped: float | None = None) -> None:
+        if not session.save_metadata:
+            return
         cameras = []
         for camera_id, recorder in session.recorders.items():
             stats = session.final_stats.get(camera_id) or recorder.stats()

@@ -137,3 +137,21 @@ def test_settings_browse_fills_the_path_and_save_uses_it(tmp_path):
         assert services.recording._base_dir == target
     finally:
         dpg.destroy_context()
+
+
+def test_settings_metadata_checkbox_round_trip(tmp_path):
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    for key in ("recording", "snapshots", "profiles", "sessions", "diagnostics", "logging"):
+        cfg[key]["directory"] = str(tmp_path / key)
+    services = AppServices.create(cfg, tmp_path / "config.json", CameraManager())
+    dpg.create_context()
+    try:
+        window = SettingsWindow(services, on_theme=lambda name: None)
+        window.show()
+        assert dpg.get_value(window._metadata) is False  # off by default
+        dpg.set_value(window._metadata, True)
+        window._save()
+        assert services.config["recording"]["save_metadata"] is True
+        assert services.recording._save_metadata is True
+    finally:
+        dpg.destroy_context()
