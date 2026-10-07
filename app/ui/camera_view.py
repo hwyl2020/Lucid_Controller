@@ -172,8 +172,13 @@ class CameraView:
             self._chip_id = dpg.add_button(label="", height=CHIP_H)
             self._format = dpg.add_button(label="", height=CHIP_H)
         self._format_group = self._format
+        # The button gets its own layer: in the bar itself the drawlist (an invisible button in Dear
+        # PyGui) is hovered first and swallows the click.
+        self._fs_layer = dpg.add_child_window(parent=self._bottom_bar, width=30, height=CHIP_H + 4, pos=(0, 7),
+                                              border=False, no_scrollbar=True, no_scroll_with_mouse=True, show=False)
+        bind(self._fs_layer, "overlay")
         self._fullscreen = dpg.add_button(label=theme.ICON_FULLSCREEN, width=30, height=CHIP_H + 4,
-                                          parent=self._bottom_bar, pos=(0, 7), show=False,
+                                          parent=self._fs_layer,
                                           callback=lambda: self._fullscreen_clicked())
         use_font(self._info, "small")
         use_font(self._fullscreen, "icon")
@@ -207,7 +212,7 @@ class CameraView:
         dpg.configure_item(self._empty_badge, show=camera_id is None)
         dpg.configure_item(self._empty_sub, show=camera_id is None)
         dpg.configure_item(self._title_dot, show=camera_id is not None)
-        dpg.configure_item(self._fullscreen, show=camera_id is not None and self._size[1] >= MIN_HEIGHT_FOR_BOTTOM_BAR)
+        dpg.configure_item(self._fs_layer, show=camera_id is not None and self._size[1] >= MIN_HEIGHT_FOR_BOTTOM_BAR)
         self._rec_key = None
         self._chip_widths = None
         self._style_message()
@@ -260,8 +265,8 @@ class CameraView:
         dpg.set_item_pos(self._bottom_bar, [0, height - BAR_HEIGHT])
         compact = height < MIN_HEIGHT_FOR_BOTTOM_BAR
         dpg.configure_item(self._chips, show=not compact)
-        dpg.configure_item(self._fullscreen, show=not compact and self.camera_id is not None)
-        dpg.set_item_pos(self._fullscreen, [width - TEXT_X - 30, 7])
+        dpg.configure_item(self._fs_layer, show=not compact and self.camera_id is not None)
+        dpg.set_item_pos(self._fs_layer, [width - TEXT_X - 30, 7])
         self._draw_bars()
         self._message_key = None
         self._layout_image()

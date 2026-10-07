@@ -15,7 +15,7 @@ import cv2
 import dearpygui.dearpygui as dpg
 import numpy as np
 
-from app import APP_NAME, APP_PUBLISHER, paths
+from app import APP_NAME, paths
 from app.cameras.camera_device import CameraError
 from app.models.camera_state import CameraState
 from app.services.app_services import AppServices
@@ -43,7 +43,6 @@ MIN_STREAM_WIDTH = 320
 MIN_STREAM_HEIGHT = 180
 SPLITTER = 6  # resize handle thickness
 LOGO_SIZE = 42  # app icon in the header
-CAPSULE_HEIGHT = 30
 HEADER_HEIGHT = 58
 STATUS_HEIGHT = 34
 SPACING = 8  # matches mvStyleVar_ItemSpacing y in theme.py
@@ -118,32 +117,17 @@ class MainWindow:
                     dpg.add_table_column(width_stretch=True)
                     dpg.add_table_column(width_fixed=True)
                     with dpg.table_row():
-                        with dpg.group(horizontal=True, horizontal_spacing=24):
-                            with dpg.group(horizontal=True, horizontal_spacing=14):
-                                logo = _logo_texture(LOGO_SIZE)
-                                if logo is not None:
-                                    dpg.add_image(logo, width=LOGO_SIZE, height=LOGO_SIZE)
-                                with theme.nudge(4):
-                                    with dpg.group(horizontal=True, horizontal_spacing=0):
-                                        # The name with its last letter (the X) in HWYL orange.
-                                        app_title = dpg.add_text(APP_TITLE[:-1])
-                                        app_title_x = dpg.add_text(APP_TITLE[-1], color=theme.BRAND_ORANGE)
-                                with theme.nudge(15):
-                                    publisher = secondary_text(f"by {APP_PUBLISHER}")
-                            with theme.nudge(6):
-                                with dpg.group(horizontal=True, horizontal_spacing=8):
-                                    # "● Live | 1 of 4 connected" capsule.
-                                    with dpg.child_window(width=200, height=CAPSULE_HEIGHT, no_scrollbar=True,
-                                                          no_scroll_with_mouse=True) as self._capsule:
-                                        with dpg.group(horizontal=True, horizontal_spacing=10):
-                                            self._live_pill = dpg.add_button(label="", height=CAPSULE_HEIGHT - 6)
-                                            with theme.nudge(3):
-                                                self._connected = secondary_text("")
-                                    self._rec_pill = dpg.add_button(label="", height=CAPSULE_HEIGHT - 2, show=False)
-                                    self._error_pill = dpg.add_button(label="", height=CAPSULE_HEIGHT - 2, show=False)
+                        # Logo and name only (status lives on the tiles and in the footer).
+                        with dpg.group(horizontal=True, horizontal_spacing=14):
+                            logo = _logo_texture(LOGO_SIZE)
+                            if logo is not None:
+                                dpg.add_image(logo, width=LOGO_SIZE, height=LOGO_SIZE)
+                            with theme.nudge(4):
+                                with dpg.group(horizontal=True, horizontal_spacing=0):
+                                    # The name with its last letter (the X) in HWYL orange.
+                                    app_title = dpg.add_text(APP_TITLE[:-1])
+                                    app_title_x = dpg.add_text(APP_TITLE[-1], color=theme.BRAND_ORANGE)
                         with dpg.group(horizontal=True, horizontal_spacing=12):
-                            with theme.nudge(13):
-                                layout_caption = secondary_text("Layout")
                             with theme.nudge(7):
                                 self._layout_slot = dpg.add_group()
                             with theme.nudge(5):
@@ -151,18 +135,10 @@ class MainWindow:
                                                       callback=lambda: self._settings.show())
             bind(header, "canvas")
             bind(header_table, "tight")
-            bind(self._capsule, "capsule")
             bind(gear, "icon_button")
             use_font(gear, "icon")
             use_font(app_title, "brand")
             use_font(app_title_x, "brand")
-            use_font(publisher, "body")
-            use_font(layout_caption, "body")
-            use_font(self._connected, "small")
-            for pill in (self._live_pill, self._rec_pill, self._error_pill):
-                use_font(pill, "caption")
-            self._pill_roles: dict[int | str, str] = {}
-            self._capsule_text: tuple | None = None
 
             with dpg.group(horizontal=True, horizontal_spacing=(12 - SPLITTER) // 2):
                 with dpg.child_window(width=self._sidebar_width, height=-STATUS_HEIGHT - 8, border=True) as sidebar:
@@ -261,25 +237,8 @@ class MainWindow:
         camera_ids = self._manager.camera_ids
         states = [self._manager.state(cid) for cid in camera_ids]
         streaming = states.count(CameraState.ACQUIRING)
-        errors = states.count(CameraState.ERROR)
         total_fps = sum(s.measured_fps for cid in camera_ids if (s := self._manager.stats(cid)) is not None)
 
-        recording = len(recording_status.cameras) if recording_status.active else 0
-        self._set_pill(self._live_pill, "\u25cf  Live" if streaming else "\u25cf  Idle",
-                       "pill_success" if streaming else "pill_neutral")
-        connected = sum(1 for cid in camera_ids if self._manager.camera(cid).connected)
-        capsule = (dpg.get_item_label(self._live_pill), f"{connected} of {len(camera_ids)} connected")
-        if capsule[1] != dpg.get_value(self._connected):
-            dpg.set_value(self._connected, capsule[1])
-        # Fit the capsule to what is actually drawn (the pill and the text, measured after layout).
-        pill_w = dpg.get_item_rect_size(self._live_pill)[0]
-        text_w = dpg.get_item_rect_size(self._connected)[0]
-        width = int(pill_w + 10 + text_w + 14) if pill_w and text_w else 200
-        if width != self._capsule_text:
-            self._capsule_text = width
-            dpg.configure_item(self._capsule, width=width)
-        self._set_pill(self._rec_pill, f"\u25cf  REC {recording}", "pill_rec", show=bool(recording))
-        self._set_pill(self._error_pill, f"{errors} error{'s' if errors != 1 else ''}", "pill_error", show=bool(errors))
 
         sep = "   \u00b7   "
         dpg.set_value(
@@ -319,15 +278,6 @@ class MainWindow:
                 name = camera_id
             timers.append((name, current.elapsed_s))
         return timers
-
-    def _set_pill(self, pill, label: str, role_name: str, show: bool = True) -> None:
-        if dpg.get_item_label(pill) != label:
-            dpg.configure_item(pill, label=label)
-        if dpg.is_item_shown(pill) != show:
-            dpg.configure_item(pill, show=show)
-        if self._pill_roles.get(pill) != role_name:
-            self._pill_roles[pill] = role_name
-            bind(pill, role_name)
 
     def _fit_main_area(self) -> None:
         """Give the sidebar/multiview row all height not used by the sections below it."""
