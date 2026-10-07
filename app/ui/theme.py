@@ -37,21 +37,21 @@ THEME_TEXT = (-255, 0, 0, 255)  # Dear PyGui sentinel: use the theme's (or bound
 # --- tokens ------------------------------------------------------------------------------------
 PALETTES: dict[str, dict[str, tuple]] = {
     "dark": {
-        "canvas": (16, 18, 23),           # main window background
-        "surface": (23, 26, 32),          # sidebar / section panels
-        "card": (31, 35, 43),             # cards inside surfaces, popups, floating windows
-        "raised": (37, 42, 51),           # floating window background
-        "control": (42, 47, 57),          # buttons, inputs, combos
-        "control_hover": (52, 58, 70),
-        "control_active": (63, 70, 84),
-        "segment_on": (74, 82, 98),       # selected segment of a segmented control
-        "separator": (45, 50, 60),
-        "border": (52, 58, 69),
-        "text": (236, 239, 244),
-        "text_secondary": (150, 158, 173),
-        "text_tertiary": (100, 108, 123),
-        "bar": (12, 14, 18),              # menu bar, status bar, window title bars
-        "stage": (6, 7, 9),               # letterbox behind camera images
+        "canvas": (11, 20, 37),           # main window background (deep navy)
+        "surface": (17, 30, 52),          # sidebar / section cards
+        "card": (22, 38, 64),             # cards inside surfaces, popups, floating windows
+        "raised": (21, 36, 61),           # floating window background
+        "control": (31, 49, 80),          # buttons, inputs, combos
+        "control_hover": (40, 61, 98),
+        "control_active": (49, 73, 116),
+        "segment_on": (74, 82, 98),       # (unused: the selected segment is accent-filled)
+        "separator": (33, 52, 84),
+        "border": (43, 66, 104),
+        "text": (236, 241, 250),
+        "text_secondary": (152, 168, 196),
+        "text_tertiary": (104, 121, 150),
+        "bar": (9, 17, 32),               # menu bar, status bar, window title bars
+        "stage": (4, 9, 18),              # letterbox behind camera images
         "row_alt": (255, 255, 255, 7),
         "scrollbar": (255, 255, 255, 38),
         "on_accent": (255, 255, 255),
@@ -86,7 +86,7 @@ PALETTES: dict[str, dict[str, tuple]] = {
 
 # name -> (dark variant, light variant). Status hues (green/amber/red) are deliberately absent.
 ACCENTS: dict[str, tuple[tuple, tuple]] = {
-    "Azure": ((64, 145, 255), (16, 104, 232)),
+    "Azure": ((41, 128, 255), (16, 104, 232)),
     "Indigo": ((123, 117, 255), (84, 76, 222)),
     "Violet": ((178, 118, 255), (138, 70, 222)),
     "Teal": ((38, 198, 186), (0, 140, 134)),
@@ -115,6 +115,9 @@ TEXT_DIM = PALETTES["dark"]["text_secondary"]
 WARNING_COLOR = _STATUS["dark"]["warning"]
 
 _current = {"theme": "dark", "accent": DEFAULT_ACCENT, "revision": 0}
+
+
+BRAND_ORANGE = (240, 104, 20)  # HWYL orange: the X of VisionX, the logo brackets
 
 
 def _mix(a: tuple, b: tuple, t: float) -> tuple:
@@ -443,11 +446,12 @@ def _segment_track() -> None:
 
 
 def _segment_on() -> None:
+    """Selected segment: filled with the accent colour."""
     with dpg.theme_component(dpg.mvButton):
-        _col(dpg.mvThemeCol_Button, "segment_on")
-        _col(dpg.mvThemeCol_ButtonHovered, "segment_on")
-        _col(dpg.mvThemeCol_ButtonActive, "segment_on")
-        _col(dpg.mvThemeCol_Text, "text")
+        _col(dpg.mvThemeCol_Button, "accent")
+        _col(dpg.mvThemeCol_ButtonHovered, "accent")
+        _col(dpg.mvThemeCol_ButtonActive, "accent")
+        _col(dpg.mvThemeCol_Text, "on_accent")
         dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 7)
         dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 8, 3)
 
@@ -499,6 +503,74 @@ def _splitter() -> None:
         _col(dpg.mvThemeCol_ButtonActive, "accent")
         dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 3)
         dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0)
+
+
+def _icon_button() -> None:
+    """Square icon button on a control-coloured background (header ⚙, sidebar ⟳)."""
+    with dpg.theme_component(dpg.mvButton):
+        _col(dpg.mvThemeCol_Button, "control")
+        _col(dpg.mvThemeCol_ButtonHovered, "control_hover")
+        _col(dpg.mvThemeCol_ButtonActive, "control_active")
+        _col(dpg.mvThemeCol_Text, "text")
+        dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 10)
+        dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0)
+
+
+def _icon_ghost() -> None:
+    """Background-less icon button (sidebar ⟳, row chevrons)."""
+    with dpg.theme_component(dpg.mvButton):
+        dpg.add_theme_color(dpg.mvThemeCol_Button, (0, 0, 0, 0))
+        _col(dpg.mvThemeCol_ButtonHovered, "control")
+        _col(dpg.mvThemeCol_ButtonActive, "control_hover")
+        _col(dpg.mvThemeCol_Text, "text_secondary")
+        dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 8)
+        dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0)
+
+
+def _capsule() -> None:
+    """Header status capsule ("● Live | 1 of 4 connected")."""
+    with dpg.theme_component(dpg.mvChildWindow):
+        _col(dpg.mvThemeCol_ChildBg, "control")
+        dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 15)
+        dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 0)
+        dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 3, 3)
+
+
+def _section_card() -> None:
+    """Camera Status / Logs card: header row + body in one rounded card."""
+    with dpg.theme_component(dpg.mvChildWindow):
+        _col(dpg.mvThemeCol_ChildBg, "surface")
+        _col(dpg.mvThemeCol_Border, "separator")
+        dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 12)
+        dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 1)
+        dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 16, 8)
+    with dpg.theme_component(dpg.mvSelectable):
+        dpg.add_theme_color(dpg.mvThemeCol_Header, (0, 0, 0, 0))
+        dpg.add_theme_color(dpg.mvThemeCol_HeaderHovered, (255, 255, 255, 8))
+        dpg.add_theme_color(dpg.mvThemeCol_HeaderActive, (255, 255, 255, 14))
+
+
+def _section_body() -> None:
+    """Body inside a section card (no second border)."""
+    with dpg.theme_component(dpg.mvChildWindow):
+        dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (0, 0, 0, 0))
+        dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 0)
+        dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 4)
+
+
+def _tile_frame(selected: bool) -> Callable[[], None]:
+    """Wrapper around a camera tile: an accent border when the tile's camera is selected."""
+    def build() -> None:
+        with dpg.theme_component(dpg.mvChildWindow):
+            _col(dpg.mvThemeCol_ChildBg, "canvas")
+            if selected:
+                _col(dpg.mvThemeCol_Border, "accent")
+            else:
+                dpg.add_theme_color(dpg.mvThemeCol_Border, (0, 0, 0, 0))
+            dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 12)
+            dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 2 if selected else 0)
+            dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0)
+    return build
 
 
 def _quiet_selectable() -> None:
@@ -618,6 +690,14 @@ _ROLE_BUILDERS: dict[str, Callable[[], None]] = {
     "pill_error": _pill("error", 40, "error"),
     "pill_rec": _pill("error", None, "on_accent"),
     "quiet_selectable": _quiet_selectable,
+    "icon_button": _icon_button,
+    "capsule": _capsule,
+    "icon_ghost": _icon_ghost,
+    "section_card": _section_card,
+    "section_body": _section_body,
+    "tile_frame": _tile_frame(False),
+    "tile_frame_selected": _tile_frame(True),
+    "pill_overlay": _pill("card", 220, "text"),
     "splitter": _splitter,
     "callout_warning": _callout("warning"),
     "stat_tile": _stat_tile,
@@ -659,6 +739,7 @@ _REGULAR = (_FONT_DIR / "segoeui.ttf", Path("/System/Library/Fonts/SFNS.ttf"),
             Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
 _SEMIBOLD = (_FONT_DIR / "seguisb.ttf", _FONT_DIR / "segoeuib.ttf",
              Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
+_ICONS = (_FONT_DIR / "segmdl2.ttf", _FONT_DIR / "SegoeIcons.ttf")
 _MONO = (_FONT_DIR / "consola.ttf", Path("/System/Library/Fonts/SFNSMono.ttf"),
          Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"))
 # role -> (candidates, pixel size). Type scale: caption 13 / small 14 / body 16 / title 21 / metric 19.
@@ -670,6 +751,9 @@ FONT_CANDIDATES = {
     "caption": (_SEMIBOLD, 13),
     "small": (_REGULAR, 14),
     "mono": (_MONO, 14),
+    "icon": (_ICONS, 16),
+    "icon_large": (_ICONS, 26),
+    "brand": (_SEMIBOLD, 26),
 }
 FONT_SIZES = {role_: size for role_, (_c, size) in FONT_CANDIDATES.items()}
 
@@ -683,6 +767,9 @@ class Fonts:
     caption: int | str | None = None
     small: int | str | None = None
     mono: int | str | None = None
+    icon: int | str | None = None
+    icon_large: int | str | None = None
+    brand: int | str | None = None
 
 
 _fonts = Fonts()
@@ -750,6 +837,31 @@ def caption(text: str, parent: int | str | None = None, upper: bool = True, **kw
     use_font(item, "caption")
     bind(item, "text_tertiary")
     return item
+
+
+# Segoe MDL2 Assets code points used by the UI.
+ICON_SETTINGS = "\ue713"
+ICON_REFRESH = "\ue895"
+ICON_VIDEO = "\ue714"
+ICON_SLIDERS = "\ue9e9"
+ICON_DOCUMENT = "\ue8a5"
+ICON_GAUGE = "\uec4a"
+ICON_DRIVE = "\ueda2"
+ICON_CHEVRON_DOWN = "\ue70d"
+ICON_CHEVRON_UP = "\ue70e"
+ICON_CHEVRON_RIGHT = "\ue76c"
+
+
+def icon(glyph: str, parent: int | str | None = None, large: bool = False, **kwargs) -> int | str:
+    """An icon from the Segoe MDL2 Assets font (text item in the icon font)."""
+    kw = {"parent": parent} if parent is not None else {}
+    item = dpg.add_text(glyph, **kw, **kwargs)
+    use_font(item, "icon_large" if large else "icon")
+    return item
+
+
+def has_icon_font() -> bool:
+    return _fonts.icon is not None and _fonts.icon != _fonts.body
 
 
 def secondary_text(text: str = "", parent: int | str | None = None, **kwargs) -> int | str:

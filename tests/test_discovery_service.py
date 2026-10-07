@@ -124,7 +124,7 @@ def test_sidebar_and_tiles_pick_up_hot_plugged_cameras(ui):
     sidebar.update()
     view.update()
     assert list(sidebar.rows) == ["A", "B"]
-    assert dpg.get_value(sidebar._count) == "2"
+    assert dpg.get_item_label(sidebar._count) == "2"
     assert [v.camera_id for v in view._views] == ["A", "B", None, None]
 
 
@@ -229,4 +229,4 @@ def test_sidebar_and_tiles_drop_unplugged_cameras(ui):
     sidebar.update()
     view.update()
     assert sidebar.rows == {} and dpg.is_item_shown(sidebar._empty)
-    assert dpg.get_value(sidebar._count) == "0"
+    assert dpg.get_item_label(sidebar._count) == "0"

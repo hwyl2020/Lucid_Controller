@@ -37,7 +37,10 @@ class MultiView:
         layout: str = "2x2",
         recording: RecordingService | None = None,
         reconnect: ReconnectService | None = None,
+        on_select=None,
     ) -> None:
+        self._on_select = on_select  # clicking a tile selects its camera
+        self.selected: str | None = None  # the selected camera's tile gets an accent border
         self._manager = manager
         self._recording = recording
         self._reconnect = reconnect
@@ -83,6 +86,7 @@ class MultiView:
             self._resize_tiles()
         for view in self._views:
             view.update(self._manager, self._recording, self._reconnect)
+            view.set_selected(view.camera_id is not None and view.camera_id == self.selected)
 
     def _build(self) -> None:
         for view in self._views:
@@ -97,7 +101,7 @@ class MultiView:
             row = dpg.add_group(horizontal=True, horizontal_spacing=TILE_SPACING, parent=self._grid)
             self._rows.append(row)
             for _ in range(columns):
-                view = CameraView(row, self._texture_registry)
+                view = CameraView(row, self._texture_registry, on_click=self._on_select)
                 index = len(self._views)
                 view.assign(camera_ids[index] if index < len(camera_ids) else None, self._manager)
                 self._views.append(view)
