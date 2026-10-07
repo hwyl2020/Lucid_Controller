@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG: dict[str, Any] = {
     "application": {
         "theme": "dark",
-        "accent": "Azure",  # UI accent colour: Azure, Indigo, Violet, Teal or Graphite
+        "accent": "Auto",  # Auto (purple-blue dark / blue light), Azure, Indigo, Violet, Teal or Graphite
         "default_layout": "2x2",
     },
     "ui": {

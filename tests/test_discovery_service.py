@@ -230,3 +230,22 @@ def test_sidebar_and_tiles_drop_unplugged_cameras(ui):
     view.update()
     assert sidebar.rows == {} and dpg.is_item_shown(sidebar._empty)
     assert dpg.get_item_label(sidebar._count) == "0"
+
+
+def test_fullscreen_button_shows_one_camera_and_returns_to_the_grid(ui):
+    manager, sidebar, view = ui
+    for cid in ("A", "B"):
+        manager.add_camera(sim(cid))
+    view.update()
+    assert [v.camera_id for v in view._views] == ["A", "B", None, None]
+    view.toggle_focus("B")  # fullscreen button on B's tile
+    assert [v.camera_id for v in view._views] == ["B"] and view._views[0].focused
+    view.toggle_focus("B")  # again: back to the grid
+    assert [v.camera_id for v in view._views] == ["A", "B", None, None]
+    view.toggle_focus("A")
+    view.set_layout("2x2")  # choosing a layout also leaves fullscreen
+    assert view.focus is None and len(view._views) == 4
+    view.toggle_focus("A")
+    manager.detach_camera("A")  # the camera shown fullscreen is unplugged
+    view.update()
+    assert view.focus is None and [v.camera_id for v in view._views] == ["B", None, None, None]

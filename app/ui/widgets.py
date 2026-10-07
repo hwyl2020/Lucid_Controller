@@ -58,7 +58,7 @@ def switch_rgba(on: bool, enabled: bool, track_on: tuple, track_off: tuple, knob
 
 
 def _paint() -> None:
-    track_on, track_off = theme.color("success"), theme.color("control_active")
+    track_on, track_off = theme.color("accent"), theme.color("control_active")
     knob = theme.color("knob")
     for key in list(_textures):
         on, enabled = key.startswith("on"), not key.endswith("disabled")
@@ -89,7 +89,8 @@ class SectionCard:
 
     TITLE_INDENT = " " * 11  # room for the icon drawn over the header row
 
-    def __init__(self, parent: int | str | None, title: str, glyph: str, default_open: bool = True) -> None:
+    def __init__(self, parent: int | str | None, title: str, glyph: str, default_open: bool = True,
+                 badge: bool = False) -> None:
         kw = {"parent": parent} if parent is not None else {}
         self._open = default_open
         self._width = -1
@@ -97,12 +98,16 @@ class SectionCard:
         theme.bind(self.card, "section_card")
         self._hit = dpg.add_selectable(label=self.TITLE_INDENT + title, parent=self.card, width=400, height=26,
                                        callback=lambda: self.set_open(not self._open))
-        self._icon = theme.icon(glyph, parent=self.card, pos=(18, 11))
+        if badge:  # the icon on an accent-tinted rounded square
+            self._icon = dpg.add_button(label=glyph, parent=self.card, width=28, height=26, pos=(12, 8))
+            theme.use_font(self._icon, "icon")
+        else:
+            self._icon = theme.icon(glyph, parent=self.card, pos=(18, 11))
         self._chevron = theme.icon(theme.ICON_CHEVRON_UP if default_open else theme.ICON_CHEVRON_DOWN,
                                    parent=self.card, pos=(0, 12))
         self.content = dpg.add_group(parent=self.card, show=default_open)
         theme.use_font(self._hit, "heading")
-        theme.bind(self._icon, "text_secondary")
+        theme.bind(self._icon, "icon_badge" if badge else "text_secondary")
         theme.bind(self._chevron, "text_secondary")
 
     @property

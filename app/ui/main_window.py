@@ -99,7 +99,7 @@ class MainWindow:
                             name: dpg.add_menu_item(label=name, check=True,
                                                     callback=lambda _s, _a, n: self.set_accent(n, persist=True),
                                                     user_data=name)
-                            for name in ACCENTS
+                            for name in theme.ACCENT_CHOICES
                         }
                 with dpg.menu(label="Cameras"):
                     dpg.add_menu_item(label="Scan for cameras now", callback=lambda: services.discovery.scan_now(),
@@ -288,8 +288,13 @@ class MainWindow:
             f"{total_fps:.1f} FPS total{sep}Layout: {self._multiview.layout.replace('x', ' \u00d7 ')}"
             f"{sep}UI {self._ui_fps:.0f} FPS",
         )
-        rec_text, free_text = split_recording_status(recording_status, self._recording_timers(recording_status))
-        dpg.set_value(self._status_rec, rec_text.removeprefix("●").strip().replace(" | ", sep))
+        # Right: "● Recording" only while a camera records (its time is on the camera's tile), or the
+        # last recording problem; always the free disk space.
+        _rec_text, free_text = split_recording_status(recording_status)
+        rec_label = "Recording" if recording_status.active else (recording_status.error or "")
+        if dpg.get_value(self._status_rec) != rec_label:
+            dpg.set_value(self._status_rec, rec_label)
+            dpg.configure_item(self._status_rec_dot, show=bool(rec_label))
         dpg.set_value(self._status_free, free_text)
         active = recording_status.active or bool(recording_status.error)
         key = (active, bool(streaming), theme.revision())

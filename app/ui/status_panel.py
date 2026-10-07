@@ -35,7 +35,9 @@ STATUS_PILLS = {CameraState.ACQUIRING: "pill_success", CameraState.ERROR: "pill_
 class _Line:
     def __init__(self, table: int | str, status: CameraStatus) -> None:
         with dpg.table_row(parent=table):
-            name = dpg.add_text(status.display_name)
+            with dpg.group(horizontal=True, horizontal_spacing=8):
+                self.name_dot = dpg.add_text("●")
+                name = dpg.add_text(status.display_name)
             with dpg.group(horizontal=True, horizontal_spacing=6):
                 self.dot = dpg.add_text("●", show=False)
                 self.state = dpg.add_button(label="", height=22)
@@ -44,6 +46,7 @@ class _Line:
             self.frames = dpg.add_text(DASH)
             dpg.add_text("")  # filler cell for the stretch column
         use_font(name, "heading")
+        use_font(self.name_dot, "caption")
         use_font(self.dot, "caption")
         use_font(self.state, "caption")
         self._last: tuple | None = None
@@ -62,6 +65,7 @@ class _Line:
         self._last = shown
         color = STATE_COLORS[status.state]
         dpg.configure_item(self.dot, color=color)
+        dpg.configure_item(self.name_dot, color=color)
         dpg.configure_item(self.state, label=f"●  {STATE_NAMES[status.state]}")
         bind(self.state, STATUS_PILLS.get(status.state, "pill_neutral"))
         dpg.set_value(self.bandwidth, shown[1])
@@ -93,7 +97,7 @@ class StatusPanel:
             self.splitter = Splitter(None, vertical=False, get_size=self.body_height, set_size=self._drag_to,
                                      minimum=MIN_BODY_HEIGHT, maximum=max_height, sign=-1,
                                      on_release=self._released)
-            self.section = SectionCard(None, "Camera Status", theme.ICON_GAUGE, default_open)
+            self.section = SectionCard(None, "Camera Status", theme.ICON_PULSE, default_open, badge=True)
             self.header = self.section.content
             with dpg.child_window(parent=self.header, height=HEADER_ROW_HEIGHT + ROW_HEIGHT + BODY_PADDING,
                                   border=False) as self._body:

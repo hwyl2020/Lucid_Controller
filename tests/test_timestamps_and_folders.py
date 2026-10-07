@@ -89,7 +89,7 @@ def test_recording_tile_shows_its_own_recording_time(tile):
     assert wait_for(lambda: manager.state("A").name == "ACQUIRING")
     recording.start(camera_ids=["A"])
     view.update(manager, recording)
-    assert dpg.get_value(view._state) == "REC  00:00:00"
+    assert dpg.get_value(view._rec_label) == "REC  00:00:00"  # badge under the name
 
 
 # --- Browse… --------------------------------------------------------------------------

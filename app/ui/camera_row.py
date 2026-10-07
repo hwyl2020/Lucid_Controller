@@ -134,6 +134,7 @@ class CameraRow:
 
             with dpg.group(show=False) as self.panel:
                 dpg.add_separator()
+                section_label("Streaming")
                 # Power switch + stream button on one line.
                 with _borderless_table(policy=dpg.mvTable_SizingFixedFit) as power_row:
                     dpg.add_table_column(width_stretch=True)
@@ -154,6 +155,15 @@ class CameraRow:
                 with dpg.group(horizontal=True):
                     self.video_format = dpg.add_combo(list(VIDEO_FORMATS), default_value=recording.default_mode.label,
                                                       width=CONTROL_WIDTH)
+                    # While recording, "● Recording..." takes the format box's place.
+                    with dpg.group(horizontal=True, horizontal_spacing=8, show=False) as self.recording_label:
+                        dpg.add_spacer(width=2)
+                        with theme.nudge(3):
+                            rec_dot = dpg.add_text("●", color=COLORS["error"])
+                        with theme.nudge(3):
+                            rec_word = dpg.add_text("Recording...")
+                        dpg.add_spacer(width=CONTROL_WIDTH - 110)
+                    use_font(rec_dot, "heading")
                     self.rec_button = dpg.add_button(label="●  Record", width=-1, callback=self.toggle_recording)
                 with dpg.group(horizontal=True, horizontal_spacing=10):
                     self._stamp_switch = Switch(None, self.toggle_timestamp)
@@ -172,21 +182,6 @@ class CameraRow:
                 self.capture_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
                 use_font(self.capture_text, "small")
 
-                # Live statistics as three metric blocks (value over caption).
-                with _borderless_table(policy=dpg.mvTable_SizingStretchSame) as metrics:
-                    for _ in range(3):
-                        dpg.add_table_column()
-                    with dpg.table_row():
-                        self._metrics = []
-                        for label in ("Mb/s", "FPS", "Frames"):
-                            with dpg.group() as block:
-                                self._metrics.append(dpg.add_text(DASH))
-                                caption(label, upper=False)
-                            bind(block, "stack")
-                bind(metrics, "compact_table")
-                for item in self._metrics:
-                    use_font(item, "metric")
-                self.stats_text = self._metrics[0]
                 self.grid_button = dpg.add_button(label="Property Grid…", width=-1,
                                                   callback=lambda: self._on_property_grid(self.camera_id))
         bind(self.card, "card")
@@ -377,7 +372,9 @@ class CameraRow:
         dpg.configure_item(self.rec_button, label="■  Stop recording" if recording else "●  Record",
                            enabled=acquiring or recording)
         self._bind(self.rec_button, "danger" if recording else ("record_idle" if acquiring else None))
-        dpg.configure_item(self.video_format, enabled=not recording)
+        dpg.configure_item(self.video_format, enabled=not recording, show=not recording)
+        if dpg.is_item_shown(self.recording_label) != recording:
+            dpg.configure_item(self.recording_label, show=recording)
         raw = VIDEO_FORMATS[dpg.get_value(self.video_format)] is RecordingMode.RAW
         # Raw frames are never altered (their timestamps are in frames.csv); fixed while recording.
         self._stamp_switch.set(self.timestamp_on and not raw, not recording and not raw,
@@ -406,18 +403,13 @@ class CameraRow:
         elif not camera_on:
             self._set_text(self.acq_text, "Camera is off. Switch it on to stream.")
         else:
-            self._set_text(self.acq_text, "Streaming" if acquiring else
-                           "On, not streaming · stream-locked settings can be changed")
+            self._set_text(self.acq_text, "")  # the switch and the stream button say it all
         current = self._recording.camera_recording(self.camera_id)
         if current is not None:
             st = current.stats
             dropped = st.frame_gaps + st.queue_overflows
             self._set_text(self.rec_text, f"● REC {format_duration(current.elapsed_s)} · {st.frames_written:,} frames"
                            f" · {dropped} dropped", error=bool(dropped or st.error))
-        values = ((f"{status.bandwidth_mbps:,.1f}", f"{status.fps:.2f}", f"{status.frame_count:,}")
-                  if acquiring else (DASH, DASH, DASH))
-        for item, value in zip(self._metrics, values):
-            dpg.set_value(item, value)
 
     @staticmethod
     def _set_text(item, text: str, error: bool = False) -> None:

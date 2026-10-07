@@ -60,20 +60,20 @@ PALETTES: dict[str, dict[str, tuple]] = {
         "modal_dim": (0, 0, 0, 120),
     },
     "light": {
-        "canvas": (238, 240, 244),
-        "surface": (249, 250, 252),
+        "canvas": (236, 241, 248),
+        "surface": (250, 252, 255),
         "card": (255, 255, 255),
-        "raised": (252, 252, 254),
-        "control": (232, 235, 240),
-        "control_hover": (221, 225, 232),
-        "control_active": (208, 213, 222),
+        "raised": (255, 255, 255),
+        "control": (234, 239, 246),
+        "control_hover": (222, 230, 241),
+        "control_active": (208, 219, 234),
         "segment_on": (255, 255, 255),
-        "separator": (225, 228, 234),
-        "border": (214, 218, 226),
-        "text": (20, 23, 30),
-        "text_secondary": (90, 98, 112),
-        "text_tertiary": (145, 152, 166),
-        "bar": (250, 251, 253),
+        "separator": (223, 230, 240),
+        "border": (210, 220, 233),
+        "text": (17, 25, 40),
+        "text_secondary": (88, 102, 126),
+        "text_tertiary": (140, 152, 172),
+        "bar": (236, 241, 248),
         "stage": (20, 22, 27),            # camera images stay on a dark stage in light mode too
         "row_alt": (20, 30, 60, 8),
         "scrollbar": (20, 30, 60, 45),
@@ -87,12 +87,16 @@ PALETTES: dict[str, dict[str, tuple]] = {
 # name -> (dark variant, light variant). Status hues (green/amber/red) are deliberately absent.
 ACCENTS: dict[str, tuple[tuple, tuple]] = {
     "Azure": ((41, 128, 255), (16, 104, 232)),
-    "Indigo": ((123, 117, 255), (84, 76, 222)),
+    "Indigo": ((112, 100, 255), (84, 76, 222)),
     "Violet": ((178, 118, 255), (138, 70, 222)),
     "Teal": ((38, 198, 186), (0, 140, 134)),
     "Graphite": ((150, 160, 178), (88, 98, 116)),
 }
-DEFAULT_ACCENT = "Azure"
+# "Auto" = the theme's own accent: purple-blue (Indigo) in dark, blue (Azure) in light.
+ACCENT_AUTO = "Auto"
+THEME_ACCENTS = {"dark": "Indigo", "light": "Azure"}
+DEFAULT_ACCENT = ACCENT_AUTO
+ACCENT_CHOICES = (ACCENT_AUTO, *ACCENTS)
 THEMES = ("dark", "light")
 
 _STATUS = {
@@ -126,10 +130,10 @@ def _mix(a: tuple, b: tuple, t: float) -> tuple:
 
 def _resolve(name: str, accent: str) -> None:
     name = name if name in PALETTES else "dark"
-    accent = accent if accent in ACCENTS else DEFAULT_ACCENT
+    accent = accent if accent in ACCENT_CHOICES else DEFAULT_ACCENT
     p, status = PALETTES[name], _STATUS[name]
     dark = name == "dark"
-    acc = ACCENTS[accent][0 if dark else 1]
+    acc = ACCENTS[THEME_ACCENTS[name] if accent == ACCENT_AUTO else accent][0 if dark else 1]
     COLORS.clear()
     COLORS.update(p)
     COLORS.update(status)
@@ -527,6 +531,28 @@ def _icon_ghost() -> None:
         dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0)
 
 
+def _icon_badge() -> None:
+    """Small accent square holding an icon (section headers)."""
+    with dpg.theme_component(dpg.mvButton):
+        for target in (dpg.mvThemeCol_Button, dpg.mvThemeCol_ButtonHovered, dpg.mvThemeCol_ButtonActive):
+            _col(target, "accent_soft")
+        _col(dpg.mvThemeCol_Text, "accent_text")
+        dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 8)
+        dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0)
+
+
+def _overlay_pill() -> None:
+    """Chip / button drawn on a camera image: dark glass with light text in both themes, because
+    camera images always sit on the dark stage."""
+    with dpg.theme_component(dpg.mvButton):
+        dpg.add_theme_color(dpg.mvThemeCol_Button, (12, 20, 36, 200))
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (30, 44, 70, 225))
+        dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (40, 58, 92, 235))
+        dpg.add_theme_color(dpg.mvThemeCol_Text, (240, 244, 250))
+        dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 12)
+        dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 9, 1)
+
+
 def _capsule() -> None:
     """Header status capsule ("● Live | 1 of 4 connected")."""
     with dpg.theme_component(dpg.mvChildWindow):
@@ -563,12 +589,9 @@ def _tile_frame(selected: bool) -> Callable[[], None]:
     def build() -> None:
         with dpg.theme_component(dpg.mvChildWindow):
             _col(dpg.mvThemeCol_ChildBg, "canvas")
-            if selected:
-                _col(dpg.mvThemeCol_Border, "accent")
-            else:
-                dpg.add_theme_color(dpg.mvThemeCol_Border, (0, 0, 0, 0))
+            _col(dpg.mvThemeCol_Border, "accent" if selected else "separator")
             dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 12)
-            dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 2 if selected else 0)
+            dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 2 if selected else 1)
             dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0)
     return build
 
@@ -692,12 +715,13 @@ _ROLE_BUILDERS: dict[str, Callable[[], None]] = {
     "quiet_selectable": _quiet_selectable,
     "icon_button": _icon_button,
     "capsule": _capsule,
+    "icon_badge": _icon_badge,
     "icon_ghost": _icon_ghost,
     "section_card": _section_card,
     "section_body": _section_body,
     "tile_frame": _tile_frame(False),
     "tile_frame_selected": _tile_frame(True),
-    "pill_overlay": _pill("card", 220, "text"),
+    "pill_overlay": _overlay_pill,
     "splitter": _splitter,
     "callout_warning": _callout("warning"),
     "stat_tile": _stat_tile,
@@ -850,6 +874,9 @@ ICON_DRIVE = "\ueda2"
 ICON_CHEVRON_DOWN = "\ue70d"
 ICON_CHEVRON_UP = "\ue70e"
 ICON_CHEVRON_RIGHT = "\ue76c"
+ICON_FULLSCREEN = "\ue740"
+ICON_BACK_TO_GRID = "\ue73f"
+ICON_PULSE = "\ue9d9"
 
 
 def icon(glyph: str, parent: int | str | None = None, large: bool = False, **kwargs) -> int | str:
