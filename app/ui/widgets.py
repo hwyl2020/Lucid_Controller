@@ -106,7 +106,7 @@ class SectionCard:
         self._chevron = theme.icon(theme.ICON_CHEVRON_UP if default_open else theme.ICON_CHEVRON_DOWN,
                                    parent=self.card, pos=(0, 12))
         self.content = dpg.add_group(parent=self.card, show=default_open)
-        theme.use_font(self._hit, "heading")
+        theme.use_font(self._hit, "section")
         theme.bind(self._icon, "icon_badge" if badge else "text_secondary")
         theme.bind(self._chevron, "text_secondary")
 

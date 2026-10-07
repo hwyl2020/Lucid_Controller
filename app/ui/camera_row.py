@@ -184,6 +184,8 @@ class CameraRow:
 
                 self.grid_button = dpg.add_button(label="Property Grid…", width=-1,
                                                   callback=lambda: self._on_property_grid(self.camera_id))
+        for button in (self.stream_button, self.rec_button, self.capture_button, self.grid_button):
+            use_font(button, "medium")
         bind(self.card, "card")
 
     def delete(self) -> None:

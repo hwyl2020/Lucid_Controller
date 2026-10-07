@@ -764,20 +764,40 @@ _REGULAR = (_FONT_DIR / "segoeui.ttf", Path("/System/Library/Fonts/SFNS.ttf"),
 _SEMIBOLD = (_FONT_DIR / "seguisb.ttf", _FONT_DIR / "segoeuib.ttf",
              Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
 _ICONS = (_FONT_DIR / "segmdl2.ttf", _FONT_DIR / "SegoeIcons.ttf")
+# Inter (SIL Open Font License, bundled in app/resources/fonts): the UI typeface. "Inter Display"
+# for large headings, "Inter" for text, after the SF Pro Display / SF Pro Text type table (SF Pro
+# itself may not be used outside Apple platforms). Segoe UI is the fallback.
+_BUNDLED = Path(__file__).resolve().parents[1] / "resources" / "fonts"
+
+
+def _inter(name: str, fallback: tuple) -> tuple:
+    return (_BUNDLED / f"{name}.ttf", *fallback)
 _MONO = (_FONT_DIR / "consola.ttf", Path("/System/Library/Fonts/SFNSMono.ttf"),
          Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"))
-# role -> (candidates, pixel size). Type scale: caption 13 / small 14 / body 16 / title 21 / metric 19.
+# role -> (candidates, pixel size).
+#   brand    VisionX logo                 Inter Display Bold
+#   title    sidebar headings ("Cameras") Inter Display SemiBold
+#   section  Camera Status / Logs titles  Inter Display SemiBold
+#   heading  camera names                 Inter SemiBold
+#   caption  Live / REC badges, captions  Inter SemiBold
+#   medium   buttons                      Inter Medium
+#   stat     video statistics, numbers    Inter Medium
+#   metric   large numbers                Inter Medium
+#   body / small  menus, IPs, footer      Inter Regular
 FONT_CANDIDATES = {
-    "body": (_REGULAR, 16),
-    "heading": (_SEMIBOLD, 16),
-    "title": (_SEMIBOLD, 21),
-    "metric": (_SEMIBOLD, 19),
-    "caption": (_SEMIBOLD, 13),
-    "small": (_REGULAR, 14),
+    "body": (_inter("Inter-Regular", _REGULAR), 15),
+    "heading": (_inter("Inter-SemiBold", _SEMIBOLD), 15),
+    "title": (_inter("InterDisplay-SemiBold", _SEMIBOLD), 21),
+    "section": (_inter("InterDisplay-SemiBold", _SEMIBOLD), 16),
+    "metric": (_inter("Inter-Medium", _SEMIBOLD), 19),
+    "caption": (_inter("Inter-SemiBold", _SEMIBOLD), 12),
+    "small": (_inter("Inter-Regular", _REGULAR), 13),
+    "medium": (_inter("Inter-Medium", _REGULAR), 14),
+    "stat": (_inter("Inter-Medium", _REGULAR), 13),
     "mono": (_MONO, 14),
     "icon": (_ICONS, 16),
     "icon_large": (_ICONS, 26),
-    "brand": (_SEMIBOLD, 26),
+    "brand": (_inter("InterDisplay-Bold", _SEMIBOLD), 26),
 }
 FONT_SIZES = {role_: size for role_, (_c, size) in FONT_CANDIDATES.items()}
 
@@ -794,6 +814,9 @@ class Fonts:
     icon: int | str | None = None
     icon_large: int | str | None = None
     brand: int | str | None = None
+    section: int | str | None = None
+    medium: int | str | None = None
+    stat: int | str | None = None
 
 
 _fonts = Fonts()
@@ -917,6 +940,7 @@ class SegmentedControl:
                     self.buttons[label] = dpg.add_button(label=label, width=segment_width, height=height - 4,
                                                          callback=lambda _s, _a, lab: self._clicked(lab),
                                                          user_data=label)
+                    use_font(self.buttons[label], "medium")
         bind(self.track, "segment_track")
         self._paint()
 

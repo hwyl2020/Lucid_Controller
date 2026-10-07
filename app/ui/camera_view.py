@@ -179,7 +179,7 @@ class CameraView:
         use_font(self._fullscreen, "icon")
         bind(self._fullscreen, "pill_overlay")
         for chip in (self._chip_time, self._chip_fps, self._chip_id, self._format):
-            use_font(chip, "small")
+            use_font(chip, "stat")  # video statistics: Medium
             bind(chip, "pill_overlay")
         self._capsule = None
 

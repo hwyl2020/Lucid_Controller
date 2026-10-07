@@ -45,6 +45,8 @@ class _Line:
             self.fps = dpg.add_text(DASH)
             self.frames = dpg.add_text(DASH)
             dpg.add_text("")  # filler cell for the stretch column
+        for item in (self.bandwidth, self.fps, self.frames):
+            use_font(item, "stat")  # numbers: Medium
         use_font(name, "heading")
         use_font(self.name_dot, "caption")
         use_font(self.dot, "caption")
