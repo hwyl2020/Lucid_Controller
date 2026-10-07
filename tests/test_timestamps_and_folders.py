@@ -77,8 +77,9 @@ def test_streaming_tile_shows_the_real_time_timestamp(tile):
     # The tile polls the display queue itself (reading it here would consume the frame).
     assert wait_for(lambda: (view.update(manager, recording), view._frame_time)[1] != "")
     view.update(manager, recording)
-    info = dpg.get_value(view._info)
-    assert re.match(r"\d\d:\d\d:\d\d\.\d{3}   ·   [\d.]+ fps   ·   #", info), info
+    chips = [dpg.get_item_label(c) for c in (view._chip_time, view._chip_fps, view._chip_id)]
+    assert re.fullmatch(r"\d\d:\d\d:\d\d\.\d{3}", chips[0]), chips
+    assert re.fullmatch(r"[\d.]+ fps", chips[1]) and chips[2].startswith("#"), chips
 
 
 def test_recording_tile_shows_its_own_recording_time(tile):
@@ -88,7 +89,7 @@ def test_recording_tile_shows_its_own_recording_time(tile):
     assert wait_for(lambda: manager.state("A").name == "ACQUIRING")
     recording.start(camera_ids=["A"])
     view.update(manager, recording)
-    assert dpg.get_value(view._state) == "REC  00:00:00"
+    assert dpg.get_value(view._rec_label) == "REC  00:00:00"  # badge under the name
 
 
 # --- Browse… --------------------------------------------------------------------------

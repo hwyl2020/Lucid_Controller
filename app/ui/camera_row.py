@@ -40,7 +40,7 @@ from app.camera_log import camera_logger
 
 logger = logging.getLogger(__name__)
 
-SUBTITLE_INDENT = 34  # aligns the IP / state line under the camera name
+SUBTITLE_INDENT = 46  # aligns the IP / state line under the camera name
 CONTROL_WIDTH = 150
 STREAM_WIDTH = 104
 PLAY, STOP = "►", "■"  # Segoe UI has U+25BA/U+25A0 (not U+25B6)
@@ -54,6 +54,13 @@ VIDEO_FORMATS = {mode.label: mode for mode in RecordingMode}
 IMAGE_FORMAT_LABELS = {label: key for key, (_ext, label) in IMAGE_FORMATS.items()}
 STAMP_LABEL = "Timestamp on video"
 STAMP_RAW_LABEL = "Timestamp: in frames.csv for Raw"
+
+
+def section_label(text: str) -> int | str:
+    """Panel section label: title case, secondary colour, body size."""
+    item = secondary_text(text)
+    use_font(item, "body")
+    return item
 
 
 def _borderless_table(**kwargs) -> int | str:
@@ -93,26 +100,41 @@ class CameraRow:
 
         with dpg.child_window(parent=parent, auto_resize_y=True, no_scrollbar=True) as self.card:
             with dpg.group() as title_stack:  # no gap between the name line and the IP line
-                with dpg.group(horizontal=True, horizontal_spacing=6) as self.header:
-                    self.arrow = dpg.add_button(arrow=True, direction=dpg.mvDir_Right, callback=self.toggle_expanded)
-                    self.dot = dpg.add_text("●")
-                    self.name = dpg.add_selectable(label=status.display_name, width=0,
-                                                   callback=lambda: self._on_select(self.camera_id))
-                with dpg.group(horizontal=True, horizontal_spacing=6):
+                # Collapsed: one line with the IP as a chip on the right. Expanded: IP · state below.
+                with _borderless_table(policy=dpg.mvTable_SizingFixedFit) as header_table:
+                    dpg.add_table_column(width_stretch=True)
+                    dpg.add_table_column(width_fixed=True)
+                    with dpg.table_row():
+                        with dpg.group(horizontal=True, horizontal_spacing=8) as self.header:
+                            self.arrow = dpg.add_button(label=theme.ICON_CHEVRON_RIGHT, width=24, height=24,
+                                                        callback=self.toggle_expanded)
+                            with theme.nudge(2):
+                                self.dot = dpg.add_text("●")
+                            with theme.nudge(1):
+                                self.name = dpg.add_selectable(label=status.display_name, width=0,
+                                                               callback=lambda: self._on_select(self.camera_id))
+                        self.ip_chip = dpg.add_button(label=status.ip_address or "No IP", height=24,
+                                                      callback=lambda: self._on_select(self.camera_id))
+                with dpg.group(horizontal=True, horizontal_spacing=6, show=False) as self.subtitle:
                     dpg.add_spacer(width=SUBTITLE_INDENT)
                     self.ip = secondary_text(status.ip_address or "No IP")
                     sep = secondary_text("·")
                     self.state_text = secondary_text("")
             bind(title_stack, "stack")
+            bind(header_table, "tight")
             use_font(self.name, "heading")
             for item in (self.ip, sep, self.state_text):
                 use_font(item, "small")
             use_font(self.dot, "caption")
-            bind(self.arrow, "ghost")
+            use_font(self.arrow, "icon")
+            use_font(self.ip_chip, "small")
+            bind(self.arrow, "icon_ghost")
+            bind(self.ip_chip, "pill_neutral")
             bind(self.name, "quiet_selectable")
 
             with dpg.group(show=False) as self.panel:
                 dpg.add_separator()
+                section_label("Streaming")
                 # Power switch + stream button on one line.
                 with _borderless_table(policy=dpg.mvTable_SizingFixedFit) as power_row:
                     dpg.add_table_column(width_stretch=True)
@@ -129,10 +151,19 @@ class CameraRow:
                 self.acq_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
                 use_font(self.acq_text, "small")
 
-                caption("Video recording")
+                section_label("Video Recording")
                 with dpg.group(horizontal=True):
                     self.video_format = dpg.add_combo(list(VIDEO_FORMATS), default_value=recording.default_mode.label,
                                                       width=CONTROL_WIDTH)
+                    # While recording, "● Recording..." takes the format box's place.
+                    with dpg.group(horizontal=True, horizontal_spacing=8, show=False) as self.recording_label:
+                        dpg.add_spacer(width=2)
+                        with theme.nudge(3):
+                            rec_dot = dpg.add_text("●", color=COLORS["error"])
+                        with theme.nudge(3):
+                            rec_word = dpg.add_text("Recording...")
+                        dpg.add_spacer(width=CONTROL_WIDTH - 110)
+                    use_font(rec_dot, "heading")
                     self.rec_button = dpg.add_button(label="●  Record", width=-1, callback=self.toggle_recording)
                 with dpg.group(horizontal=True, horizontal_spacing=10):
                     self._stamp_switch = Switch(None, self.toggle_timestamp)
@@ -143,7 +174,7 @@ class CameraRow:
                 self.rec_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
                 use_font(self.rec_text, "small")
 
-                caption("Image capture")
+                section_label("Image Capture")
                 with dpg.group(horizontal=True):
                     self.image_format = dpg.add_combo(list(IMAGE_FORMAT_LABELS), default_value="PNG",
                                                       width=CONTROL_WIDTH)
@@ -151,23 +182,10 @@ class CameraRow:
                 self.capture_text = secondary_text("", wrap=PANEL_TEXT_WRAP, show=False)
                 use_font(self.capture_text, "small")
 
-                # Live statistics as three metric blocks (value over caption).
-                with _borderless_table(policy=dpg.mvTable_SizingStretchSame) as metrics:
-                    for _ in range(3):
-                        dpg.add_table_column()
-                    with dpg.table_row():
-                        self._metrics = []
-                        for label in ("Mb/s", "FPS", "Frames"):
-                            with dpg.group() as block:
-                                self._metrics.append(dpg.add_text(DASH))
-                                caption(label, upper=False)
-                            bind(block, "stack")
-                bind(metrics, "compact_table")
-                for item in self._metrics:
-                    use_font(item, "metric")
-                self.stats_text = self._metrics[0]
                 self.grid_button = dpg.add_button(label="Property Grid…", width=-1,
                                                   callback=lambda: self._on_property_grid(self.camera_id))
+        for button in (self.stream_button, self.rec_button, self.capture_button, self.grid_button):
+            use_font(button, "medium")
         bind(self.card, "card")
 
     def delete(self) -> None:
@@ -181,7 +199,9 @@ class CameraRow:
 
     def set_expanded(self, expanded: bool) -> None:
         self.expanded = expanded
-        dpg.configure_item(self.arrow, direction=dpg.mvDir_Down if expanded else dpg.mvDir_Right)
+        dpg.configure_item(self.arrow, label=theme.ICON_CHEVRON_DOWN if expanded else theme.ICON_CHEVRON_RIGHT)
+        dpg.configure_item(self.subtitle, show=expanded)
+        dpg.configure_item(self.ip_chip, show=not expanded)
         dpg.configure_item(self.panel, show=expanded)
         self._last_details = 0.0
 
@@ -354,7 +374,9 @@ class CameraRow:
         dpg.configure_item(self.rec_button, label="■  Stop recording" if recording else "●  Record",
                            enabled=acquiring or recording)
         self._bind(self.rec_button, "danger" if recording else ("record_idle" if acquiring else None))
-        dpg.configure_item(self.video_format, enabled=not recording)
+        dpg.configure_item(self.video_format, enabled=not recording, show=not recording)
+        if dpg.is_item_shown(self.recording_label) != recording:
+            dpg.configure_item(self.recording_label, show=recording)
         raw = VIDEO_FORMATS[dpg.get_value(self.video_format)] is RecordingMode.RAW
         # Raw frames are never altered (their timestamps are in frames.csv); fixed while recording.
         self._stamp_switch.set(self.timestamp_on and not raw, not recording and not raw,
@@ -370,6 +392,8 @@ class CameraRow:
         self._last_details = now
         status = self._statuses.status(self.camera_id)
         dpg.set_value(self.ip, status.ip_address or "No IP")
+        if dpg.get_item_label(self.ip_chip) != (status.ip_address or "No IP"):
+            dpg.configure_item(self.ip_chip, label=status.ip_address or "No IP")
         if not self.expanded:
             return
         if self._notice is not None and not camera_on:
@@ -381,18 +405,13 @@ class CameraRow:
         elif not camera_on:
             self._set_text(self.acq_text, "Camera is off. Switch it on to stream.")
         else:
-            self._set_text(self.acq_text, "Streaming" if acquiring else
-                           "On, not streaming · stream-locked settings can be changed")
+            self._set_text(self.acq_text, "")  # the switch and the stream button say it all
         current = self._recording.camera_recording(self.camera_id)
         if current is not None:
             st = current.stats
             dropped = st.frame_gaps + st.queue_overflows
             self._set_text(self.rec_text, f"● REC {format_duration(current.elapsed_s)} · {st.frames_written:,} frames"
                            f" · {dropped} dropped", error=bool(dropped or st.error))
-        values = ((f"{status.bandwidth_mbps:,.1f}", f"{status.fps:.2f}", f"{status.frame_count:,}")
-                  if acquiring else (DASH, DASH, DASH))
-        for item, value in zip(self._metrics, values):
-            dpg.set_value(item, value)
 
     @staticmethod
     def _set_text(item, text: str, error: bool = False) -> None:

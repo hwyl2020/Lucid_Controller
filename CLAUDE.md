@@ -201,11 +201,35 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
   - Filter segments: All, Debug, Info, Warning, Error. Each shows that exact level; Error also includes Critical.
   - Auto-scroll pins to the bottom every frame while it is enabled.
 - **Refresh rates:** the panels refresh at `ui.stats_refresh_hz` (default 5) and do no work while collapsed. Collapsed/expanded state lasts for the session; the defaults come from `config.ui.*_panel_open`.
-- **Fonts:** `theme.load_fonts()` must run before widgets are built. Roles (`use_font(item, role)`): `title` 21 / `heading` 16 / `metric` 19 / `caption` 13 (Segoe UI Semibold), `body` 16 / `small` 14 (Segoe UI), `mono` 14 (Consolas).
+- **Fonts:** `theme.load_fonts()` must run before widgets are built.
+  - **Typeface:** **Inter**, bundled in `app/resources/fonts` under the SIL OFL (`LICENSE-Inter.txt`). It follows the user's SF Pro type table; SF Pro itself may not be used outside Apple platforms. Segoe UI is the fallback.
+  - **Roles** (`use_font(item, role)`):
+    - `brand` 26: Inter Display Bold (logo).
+    - `title` 21 and `section` 16: Inter Display SemiBold (sidebar and section headings).
+    - `heading` 15 and `caption` 12: Inter SemiBold (camera names, badges).
+    - `medium` 14 (buttons), `stat` 13 (video statistics, numbers) and `metric` 19: Inter Medium.
+    - `body` 15 and `small` 13: Inter Regular (menus, IPs, footer).
+    - `mono` 14: Consolas (logs).
+    - `icon` 16 and `icon_large` 26: Segoe MDL2 Assets (`theme.ICON_*` code points; on every Windows 10/11 PC).
 
 ### Design system (`app/ui/theme.py`, `app/ui/widgets.py`)
 
 Platform-neutral, premium "camera workstation" look (Apple-level polish, not a macOS imitation).
+Since 0.2.0 it follows the user's light and dark reference images; the previous design is tag `v0.1.4` / branch `classic-ui`.
+- **Palettes:** a navy dark palette (canvas `#0B1425`) and an airy light palette (blue-grey canvas, white cards).
+- **Accent:** `ACCENT_AUTO` ("Auto", the default) resolves per theme through `THEME_ACCENTS`: Indigo (purple-blue) in dark, Azure (blue) in light. Explicit accents stay selectable. The selected segment is accent-filled, and the switch's "on" state uses the accent.
+- **Header:** logo, `APP_NAME` with its last letter (the X) in `BRAND_ORANGE`, "by HWYL", a "● Live | n of m connected" capsule, the layout control and a ⚙ (Settings) icon button.
+- **Sidebar:** "Cameras" title, a count pill and a ⟳ button (`discovery.scan_now`). Rows have icon chevrons; collapsed rows show the IP as a chip; expanded rows show the IP · state line. The panel has Streaming / Video Recording / Image Capture labels, and "● Recording..." replaces the format box while recording. There is no stats block (Camera Status has it). There is no "+ Add" and no ⋮ menu (removed on request).
+- **Tiles:**
+  - Each tile sits in a `tile_frame` (hairline border, accent border when its camera is selected in the sidebar).
+  - The top bar has the state dot, the name, the IP chip on the right, and the REC timer / ERROR badge under the name.
+  - The bottom bar has `pill_overlay` chips (time, fps, frame id, resolution · format) and a fullscreen button (`MultiView.toggle_focus`: one camera fills the area; again, a layout choice or an unplug returns to the grid).
+  - No record/capture buttons on tiles (on request).
+  - Empty tiles show a slashed camera badge, "No camera" and "Add a camera to start streaming."
+  - `pill_overlay` is dark glass in both themes, because images sit on the dark stage.
+  - Dear PyGui has no click handlers on child windows, so clicking a tile does not select it.
+- **Sections:** `widgets.SectionCard` (icon or accent `icon_badge`, title, chevron; `content` holds the body) replaces collapsing headers for Camera Status and Logs. Camera Status shows the state as pills and a dot before each name.
+- **Footer:** a dot + summary on the left; on the right "● Recording" only while recording (no time; it is on the tiles) or the last recording error, plus a drive icon and free space.
 - **Tokens:** `PALETTES[dark|light]` (canvas, surface, card, raised, control/_hover/_active, segment_on, separator, border, text, text_secondary, text_tertiary, bar, stage, ...), `ACCENTS` (Azure default, Indigo, Violet, Teal, Graphite; dark + light variant each) and per-theme status colours (success = live/on, warning, error = record/error). Accent is for focus, selection and primary actions only; status colours only for status. Camera images always sit on the dark `stage`, also in light mode.
 - **Live switching:** `COLORS` / `STATE_COLORS` are mutated in place by `theme.apply(theme, accent)`. Component themes come from `role(name)` (created once per context, colours registered by token, recoloured with `dpg.set_value`), so switching never rebuilds widgets. Colours baked into items (`color=`, drawlists) must be refreshed when `theme.revision()` changes. `theme.on_apply` callbacks redraw textures (the switch). Item ids are reused across Dear PyGui contexts (tests), so caches key off `context_generation()`.
 - **Roles:** `surface` (sidebar/sections), `card` / `card_selected` (camera cards; selection = accent border), `canvas`, `bar`, `primary`, `danger`, `record_idle` (red label), `ghost` (icon buttons), `segment_track` / `segment_on`, `pill_*` badges, `callout_warning`, `stat_tile`, `tile` / `tile_empty` / `overlay`, `compact_table`, `tight`, `stack`, `search`, `dialog`. Helpers: `caption()` (upper-case tertiary label; `upper=False` for units like Mb/s), `secondary_text()`, `SegmentedControl`, `nudge(dy)` (vertical alignment of mixed-height controls), `text_width()`.

@@ -19,7 +19,7 @@ import dearpygui.dearpygui as dpg
 from app.services.log_buffer import LogBuffer, LogEntry
 from app.ui import theme as ui_theme
 from app.ui.theme import COLORS, THEME_TEXT, SegmentedControl, bind, secondary_text, use_font
-from app.ui.widgets import Splitter
+from app.ui.widgets import SectionCard, Splitter
 
 MAX_ROWS = 1000
 PANEL_HEIGHT = 180
@@ -90,8 +90,8 @@ class LogPanel:
             self.splitter = Splitter(None, vertical=False, get_size=self.body_height, set_size=self.set_body_height,
                                      minimum=MIN_BODY_HEIGHT, maximum=max_height, sign=-1,
                                      on_release=lambda h: on_resized(int(h)) if on_resized else None)
-            self.header = dpg.add_collapsing_header(label="Logs", default_open=default_open)
-            use_font(self.header, "heading")
+            self.section = SectionCard(None, "Logs", ui_theme.ICON_DOCUMENT, default_open)
+            self.header = self.section.content
             with dpg.group(horizontal=True, parent=self.header):
                 self._levels = SegmentedControl(None, FILTERS, self._level_filter, self.set_filter, segment_width=70)
                 dpg.add_spacer(width=4)
@@ -104,7 +104,7 @@ class LogPanel:
                 dpg.add_spacer(width=4)
                 self._count = secondary_text("")
             self._hint = dpg.add_text("", color=COLORS["warning"], parent=self.header, show=False)
-            with dpg.child_window(parent=self.header, height=int(height or PANEL_HEIGHT), border=True) as self._body:
+            with dpg.child_window(parent=self.header, height=int(height or PANEL_HEIGHT), border=False) as self._body:
                 with dpg.table(header_row=False, clipper=True, row_background=True,
                                borders_innerH=False, borders_outerH=False, borders_innerV=False,
                                borders_outerV=False, policy=dpg.mvTable_SizingFixedFit) as self._table:
@@ -112,17 +112,17 @@ class LogPanel:
                     dpg.add_table_column(width_fixed=True, init_width_or_weight=70)
                     dpg.add_table_column(width_fixed=True, init_width_or_weight=CAMERA_COLUMN_WIDTH)
                     dpg.add_table_column(width_stretch=True)
-            bind(self._body, "surface")
+            bind(self._body, "section_body")
             bind(self._table, "compact_table")
         self._was_open = self.is_open
         self._show_selected_segment()
 
     @property
     def is_open(self) -> bool:
-        return bool(dpg.get_value(self.header))
+        return self.section.is_open
 
     def set_open(self, open_: bool) -> None:
-        dpg.set_value(self.header, open_)
+        self.section.set_open(open_)
 
     def body_height(self) -> int:
         return int(dpg.get_item_height(self._body))
@@ -181,6 +181,7 @@ class LogPanel:
         self._update_count()
 
     def update(self) -> None:
+        self.section.update()
         is_open = self.is_open
         if dpg.is_item_shown(self.splitter.button) != is_open:
             dpg.configure_item(self.splitter.button, show=is_open)

@@ -23,6 +23,16 @@ def format_frame_time(timestamp: float) -> str:
     return f"{time.strftime('%H:%M:%S', time.localtime(timestamp))}.{millis:03d}"
 
 
+def split_recording_status(status: RecordingStatus,
+                           per_camera: list[tuple[str, float]] | None = None) -> tuple[str, str]:
+    """(recording part, free-space part) for the status bar, which shows them separately."""
+    text = format_recording_status(status, per_camera)
+    free = f"Free {status.free_bytes / 1e9:.0f} GB" if status.free_bytes is not None else ""
+    if free:
+        text = text.replace(f" | {free}", "")
+    return text, free
+
+
 def format_recording_status(status: RecordingStatus, per_camera: list[tuple[str, float]] | None = None) -> str:
     """Recording summary, plus free space and any recording problem.
 

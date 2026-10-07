@@ -31,7 +31,7 @@ from app.ui.settings_window import SettingsWindow
 from app.ui.status_panel import StatusPanel
 from app.ui import theme
 from app.ui.theme import ACCENTS, COLORS, THEME_TEXT, bind, load_fonts, secondary_text, use_font
-from app.ui.status_bar import format_recording_status
+from app.ui.status_bar import split_recording_status
 from app.ui.widgets import Splitter
 
 logger = logging.getLogger(__name__)
@@ -42,9 +42,10 @@ MIN_SIDEBAR_WIDTH = 300
 MIN_STREAM_WIDTH = 320
 MIN_STREAM_HEIGHT = 180
 SPLITTER = 6  # resize handle thickness
-LOGO_SIZE = 30  # app icon in the header
-HEADER_HEIGHT = 46
-STATUS_HEIGHT = 30
+LOGO_SIZE = 42  # app icon in the header
+CAPSULE_HEIGHT = 30
+HEADER_HEIGHT = 58
+STATUS_HEIGHT = 34
 SPACING = 8  # matches mvStyleVar_ItemSpacing y in theme.py
 THEME_LABELS = {"dark": "Dark", "light": "Light"}
 
@@ -98,7 +99,7 @@ class MainWindow:
                             name: dpg.add_menu_item(label=name, check=True,
                                                     callback=lambda _s, _a, n: self.set_accent(n, persist=True),
                                                     user_data=name)
-                            for name in ACCENTS
+                            for name in theme.ACCENT_CHOICES
                         }
                 with dpg.menu(label="Cameras"):
                     dpg.add_menu_item(label="Scan for cameras now", callback=lambda: services.discovery.scan_now(),
@@ -117,32 +118,51 @@ class MainWindow:
                     dpg.add_table_column(width_stretch=True)
                     dpg.add_table_column(width_fixed=True)
                     with dpg.table_row():
-                        with dpg.group(horizontal=True, horizontal_spacing=16):
-                            with dpg.group(horizontal=True, horizontal_spacing=10):
+                        with dpg.group(horizontal=True, horizontal_spacing=24):
+                            with dpg.group(horizontal=True, horizontal_spacing=14):
                                 logo = _logo_texture(LOGO_SIZE)
                                 if logo is not None:
                                     dpg.add_image(logo, width=LOGO_SIZE, height=LOGO_SIZE)
-                                with theme.nudge(1):
-                                    app_title = dpg.add_text(APP_TITLE)
-                                with theme.nudge(7):
+                                with theme.nudge(4):
+                                    with dpg.group(horizontal=True, horizontal_spacing=0):
+                                        # The name with its last letter (the X) in HWYL orange.
+                                        app_title = dpg.add_text(APP_TITLE[:-1])
+                                        app_title_x = dpg.add_text(APP_TITLE[-1], color=theme.BRAND_ORANGE)
+                                with theme.nudge(15):
                                     publisher = secondary_text(f"by {APP_PUBLISHER}")
-                            with theme.nudge(3):
+                            with theme.nudge(6):
                                 with dpg.group(horizontal=True, horizontal_spacing=8):
-                                    self._live_pill = dpg.add_button(label="", height=24)
-                                    self._rec_pill = dpg.add_button(label="", height=24, show=False)
-                                    self._error_pill = dpg.add_button(label="", height=24, show=False)
-                        with dpg.group(horizontal=True, horizontal_spacing=10):
-                            with theme.nudge(1):
+                                    # "● Live | 1 of 4 connected" capsule.
+                                    with dpg.child_window(width=200, height=CAPSULE_HEIGHT, no_scrollbar=True,
+                                                          no_scroll_with_mouse=True) as self._capsule:
+                                        with dpg.group(horizontal=True, horizontal_spacing=10):
+                                            self._live_pill = dpg.add_button(label="", height=CAPSULE_HEIGHT - 6)
+                                            with theme.nudge(3):
+                                                self._connected = secondary_text("")
+                                    self._rec_pill = dpg.add_button(label="", height=CAPSULE_HEIGHT - 2, show=False)
+                                    self._error_pill = dpg.add_button(label="", height=CAPSULE_HEIGHT - 2, show=False)
+                        with dpg.group(horizontal=True, horizontal_spacing=12):
+                            with theme.nudge(13):
                                 layout_caption = secondary_text("Layout")
-                            self._layout_slot = dpg.add_group()
+                            with theme.nudge(7):
+                                self._layout_slot = dpg.add_group()
+                            with theme.nudge(5):
+                                gear = dpg.add_button(label=theme.ICON_SETTINGS, width=36, height=34,
+                                                      callback=lambda: self._settings.show())
             bind(header, "canvas")
             bind(header_table, "tight")
-            use_font(app_title, "title")
-            use_font(publisher, "small")
-            use_font(layout_caption, "small")
+            bind(self._capsule, "capsule")
+            bind(gear, "icon_button")
+            use_font(gear, "icon")
+            use_font(app_title, "brand")
+            use_font(app_title_x, "brand")
+            use_font(publisher, "body")
+            use_font(layout_caption, "body")
+            use_font(self._connected, "small")
             for pill in (self._live_pill, self._rec_pill, self._error_pill):
                 use_font(pill, "caption")
             self._pill_roles: dict[int | str, str] = {}
+            self._capsule_text: tuple | None = None
 
             with dpg.group(horizontal=True, horizontal_spacing=(12 - SPLITTER) // 2):
                 with dpg.child_window(width=self._sidebar_width, height=-STATUS_HEIGHT - 8, border=True) as sidebar:
@@ -150,6 +170,7 @@ class MainWindow:
                     self._sidebar = CameraSidebar(
                         sidebar, self._manager, services.statuses, services.recording, services.network,
                         self.open_property_grid,
+                        on_scan=services.discovery.scan_now if services.discovery.enabled else None,
                     )
                 self._sidebar_splitter = Splitter(
                     None, vertical=True, get_size=lambda: self._sidebar_width, set_size=self.set_sidebar_width,
@@ -160,7 +181,8 @@ class MainWindow:
                 with dpg.child_window(width=-1, height=-STATUS_HEIGHT - 8, no_scrollbar=True) as area:
                     self._area_window = area
                     self._multiview = MultiView(
-                        area, self._manager, app_cfg["default_layout"], services.recording, services.reconnect
+                        area, self._manager, app_cfg["default_layout"], services.recording, services.reconnect,
+                        on_select=lambda cid: self._sidebar.select(cid),
                     )
             bind(sidebar, "surface")
             bind(area, "canvas")
@@ -189,12 +211,21 @@ class MainWindow:
                     dpg.add_table_column(width_stretch=True)
                     dpg.add_table_column(width_fixed=True)
                     with dpg.table_row():
-                        self._status = secondary_text("")
-                        self._status_rec = secondary_text("")
+                        with dpg.group(horizontal=True, horizontal_spacing=8):
+                            self._status_dot = dpg.add_text("●")
+                            self._status = secondary_text("")
+                        with dpg.group(horizontal=True, horizontal_spacing=8):
+                            self._status_rec_dot = dpg.add_text("●")
+                            self._status_rec = secondary_text("")
+                            dpg.add_spacer(width=14)
+                            with theme.nudge(1):
+                                drive = theme.icon(theme.ICON_DRIVE)
+                            self._status_free = secondary_text("")
             bind(status_bar, "bar")
             bind(status_table, "tight")
-            use_font(self._status, "small")
-            use_font(self._status_rec, "small")
+            bind(drive, "text_secondary")
+            for item in (self._status, self._status_rec, self._status_free, self._status_dot, self._status_rec_dot):
+                use_font(item, "small")
             self._status_rec_active: bool | None = None
 
         self._property_grids: dict[str, PropertyGridWindow] = {}
@@ -216,6 +247,7 @@ class MainWindow:
         recording_status = self._services.recording.status()
         self._sidebar_splitter.update()
         self._sidebar.update()
+        self._multiview.selected = self._sidebar.selected
         self._multiview.update()
         self._status_panel.update()
         self._log_panel.update()
@@ -233,8 +265,19 @@ class MainWindow:
         total_fps = sum(s.measured_fps for cid in camera_ids if (s := self._manager.stats(cid)) is not None)
 
         recording = len(recording_status.cameras) if recording_status.active else 0
-        self._set_pill(self._live_pill, f"\u25cf  {streaming} of {len(camera_ids)} live",
+        self._set_pill(self._live_pill, "\u25cf  Live" if streaming else "\u25cf  Idle",
                        "pill_success" if streaming else "pill_neutral")
+        connected = sum(1 for cid in camera_ids if self._manager.camera(cid).connected)
+        capsule = (dpg.get_item_label(self._live_pill), f"{connected} of {len(camera_ids)} connected")
+        if capsule[1] != dpg.get_value(self._connected):
+            dpg.set_value(self._connected, capsule[1])
+        # Fit the capsule to what is actually drawn (the pill and the text, measured after layout).
+        pill_w = dpg.get_item_rect_size(self._live_pill)[0]
+        text_w = dpg.get_item_rect_size(self._connected)[0]
+        width = int(pill_w + 10 + text_w + 14) if pill_w and text_w else 200
+        if width != self._capsule_text:
+            self._capsule_text = width
+            dpg.configure_item(self._capsule, width=width)
         self._set_pill(self._rec_pill, f"\u25cf  REC {recording}", "pill_rec", show=bool(recording))
         self._set_pill(self._error_pill, f"{errors} error{'s' if errors != 1 else ''}", "pill_error", show=bool(errors))
 
@@ -242,15 +285,24 @@ class MainWindow:
         dpg.set_value(
             self._status,
             f"{len(camera_ids)} camera{'s' if len(camera_ids) != 1 else ''}{sep}{streaming} live{sep}"
-            f"{total_fps:.1f} FPS total{sep}Layout {self._multiview.layout.replace('x', ' \u00d7 ')}"
+            f"{total_fps:.1f} FPS total{sep}Layout: {self._multiview.layout.replace('x', ' \u00d7 ')}"
             f"{sep}UI {self._ui_fps:.0f} FPS",
         )
-        dpg.set_value(self._status_rec, format_recording_status(
-            recording_status, self._recording_timers(recording_status)).replace(" | ", sep))
+        # Right: "● Recording" only while a camera records (its time is on the camera's tile), or the
+        # last recording problem; always the free disk space.
+        _rec_text, free_text = split_recording_status(recording_status)
+        rec_label = "Recording" if recording_status.active else (recording_status.error or "")
+        if dpg.get_value(self._status_rec) != rec_label:
+            dpg.set_value(self._status_rec, rec_label)
+            dpg.configure_item(self._status_rec_dot, show=bool(rec_label))
+        dpg.set_value(self._status_free, free_text)
         active = recording_status.active or bool(recording_status.error)
-        if active != self._status_rec_active:
-            self._status_rec_active = active
+        key = (active, bool(streaming), theme.revision())
+        if key != self._status_rec_active:
+            self._status_rec_active = key
             dpg.configure_item(self._status_rec, color=COLORS["error"] if active else THEME_TEXT)
+            dpg.configure_item(self._status_rec_dot, color=COLORS["error"])
+            dpg.configure_item(self._status_dot, color=COLORS["success"] if streaming else COLORS["text_tertiary"])
 
     def _recording_timers(self, status) -> list[tuple[str, float]]:
         """(serial number, own recording time) of each recording camera, for the status bar."""

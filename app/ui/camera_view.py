@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
 
 import dearpygui.dearpygui as dpg
 import numpy as np
@@ -30,7 +31,9 @@ from app.ui.theme import COLORS, STATE_COLORS, bind, text_width, use_font
 
 logger = logging.getLogger(__name__)
 
-BAR_HEIGHT = 40  # overlay bars (top: name + state capsule, bottom: FPS / frame id / errors)
+BAR_HEIGHT = 40  # bottom overlay bar: info chips + fullscreen button (or an error)
+TOP_BAR_HEIGHT = 66  # top overlay bar: dot + name and the IP chip; REC / ERROR badge below the name
+REC_Y = 38  # REC badge row
 MIN_HEIGHT_FOR_BOTTOM_BAR = 130  # small tiles (e.g. 4 x 4) show only the top bar
 INSET = 0  # image inset inside the tile
 TEXT_X = 14
@@ -39,6 +42,10 @@ GRADIENT_ALPHA = 165
 OVERLAY_TEXT = (246, 247, 250)
 OVERLAY_TEXT_DIM = (200, 206, 216)
 CAPSULE_H = 22
+FRAME = 2  # selection border around the tile
+CHIP_H = 22
+CHIP_PAD = 9  # pill_overlay horizontal frame padding
+EMPTY_BADGE = 64  # circle with the "no camera" icon
 CAPSULE_BG = (24, 27, 34, 200)  # glass capsule, visible on black and bright images
 STATE_LABELS = {
     CameraState.DISCONNECTED: "OFF",
@@ -81,8 +88,19 @@ def _corner_mask(drawlist, cx: float, cy: float, corner: tuple[float, float], fi
 
 
 class CameraView:
-    def __init__(self, parent: int | str, texture_registry: int | str) -> None:
+    def __init__(self, parent: int | str, texture_registry: int | str,
+                 on_click: Callable[[str], None] | None = None,
+                 on_fullscreen: Callable[[str], None] | None = None) -> None:
         self.camera_id: str | None = None
+        self.selected = False
+        self.focused = False  # shown alone (fullscreen in the camera area)
+        self._on_click = on_click
+        self._on_fullscreen = on_fullscreen
+        self._rec_key: tuple | None = None
+        self._rec_capsule = None
+        self._chip_widths: tuple | None = None
+        self._dot_key: tuple | None = None
+        self._ip = ""
         self._registry = texture_registry
         self._size = (0, 0)
 
@@ -101,30 +119,68 @@ class CameraView:
         self._format_text = ""
         self._frame_time = ""  # wall-clock time of the frame on screen
 
-        self.tile = dpg.add_child_window(parent=parent, border=False, no_scrollbar=True, no_scroll_with_mouse=True)
+        # The frame draws the selection border; the tile sits inside it, inset by FRAME.
+        self.frame = dpg.add_child_window(parent=parent, border=True, no_scrollbar=True, no_scroll_with_mouse=True)
+        bind(self.frame, "tile_frame")
+        self.tile = dpg.add_child_window(parent=self.frame, border=False, no_scrollbar=True, no_scroll_with_mouse=True,
+                                         pos=(FRAME, FRAME))
         bind(self.tile, "tile_empty")  # rebound to "tile" when a camera is assigned
+        # Empty slot: a circle with a slashed camera icon above "No camera".
+        self._empty_badge = dpg.add_child_window(parent=self.tile, width=EMPTY_BADGE, height=EMPTY_BADGE, pos=(0, 0),
+                                                 border=False, no_scrollbar=True, no_scroll_with_mouse=True)
+        bind(self._empty_badge, "overlay")
+        self._empty_circle = dpg.add_drawlist(EMPTY_BADGE, EMPTY_BADGE, parent=self._empty_badge)
+        self._empty_icon = dpg.add_text(theme.ICON_VIDEO, parent=self._empty_badge, pos=(19, 18))
+        use_font(self._empty_icon, "icon_large")
+        # The slash sits on its own layer above the icon (drawlists ignore pos; child windows do not).
+        slash_layer = dpg.add_child_window(parent=self._empty_badge, width=EMPTY_BADGE, height=EMPTY_BADGE, pos=(0, 0),
+                                           border=False, no_scrollbar=True, no_scroll_with_mouse=True)
+        bind(slash_layer, "overlay")
+        self._empty_slash = dpg.add_drawlist(EMPTY_BADGE, EMPTY_BADGE, parent=slash_layer)
         # The image is inserted before the bars; the bars (child windows) render above it.
         self._message = dpg.add_text("No camera", parent=self.tile, color=OVERLAY_TEXT_DIM, pos=(TEXT_X, 40))
         use_font(self._message, "heading")
-        self._top_bar = dpg.add_child_window(parent=self.tile, width=1, height=BAR_HEIGHT, pos=(0, 0),
+        self._empty_sub = dpg.add_text("Add a camera to start streaming.", parent=self.tile, pos=(TEXT_X, 60))
+        use_font(self._empty_sub, "small")
+        self._top_bar = dpg.add_child_window(parent=self.tile, width=1, height=TOP_BAR_HEIGHT, pos=(0, 0),
                                              border=False, no_scrollbar=True, no_scroll_with_mouse=True)
         self._bottom_bar = dpg.add_child_window(parent=self.tile, width=1, height=BAR_HEIGHT, pos=(0, 0),
                                                 border=False, no_scrollbar=True, no_scroll_with_mouse=True)
         for bar in (self._top_bar, self._bottom_bar):
             bind(bar, "overlay")
-        self._top_draw = dpg.add_drawlist(1, BAR_HEIGHT, parent=self._top_bar)
+        self._top_draw = dpg.add_drawlist(1, TOP_BAR_HEIGHT, parent=self._top_bar)
         self._bottom_draw = dpg.add_drawlist(1, BAR_HEIGHT, parent=self._bottom_bar)
-        self._title = dpg.add_text("", parent=self._top_bar, pos=(TEXT_X, 9), color=OVERLAY_TEXT)
+        self._title_dot = dpg.add_text("●", parent=self._top_bar, pos=(TEXT_X, 11), show=False)
+        self._title = dpg.add_text("", parent=self._top_bar, pos=(TEXT_X + 16, 9), color=OVERLAY_TEXT)
         use_font(self._title, "heading")
+        use_font(self._title_dot, "caption")
         self._dot = dpg.add_text("●", parent=self._top_bar, pos=(0, 11))
         self._state = dpg.add_text("", parent=self._top_bar, pos=(0, 12), color=OVERLAY_TEXT)
         use_font(self._dot, "caption")
         use_font(self._state, "caption")
-        self._info = dpg.add_text("", parent=self._bottom_bar, color=OVERLAY_TEXT_DIM, pos=(TEXT_X, 13))
-        self._format = dpg.add_text("", parent=self._bottom_bar, color=OVERLAY_TEXT_DIM, pos=(0, 13))
+        self._rec_dot = dpg.add_text("", parent=self._top_bar, pos=(TEXT_X, REC_Y + 2))
+        self._rec_label = dpg.add_text("", parent=self._top_bar, pos=(TEXT_X + 16, REC_Y + 2), color=OVERLAY_TEXT)
+        use_font(self._rec_dot, "caption")
+        use_font(self._rec_label, "caption")
+        # Bottom bar: chips (time · fps · frame id · resolution and format) on the left, the
+        # fullscreen button on the right; an error replaces the chips with red text.
+        self._info = dpg.add_text("", parent=self._bottom_bar, color=OVERLAY_TEXT_DIM, pos=(TEXT_X, 13), show=False)
+        with dpg.group(horizontal=True, horizontal_spacing=6, parent=self._bottom_bar, pos=(TEXT_X - 4, 9)) as chips:
+            self._chips = chips
+            self._chip_time = dpg.add_button(label="", height=CHIP_H)
+            self._chip_fps = dpg.add_button(label="", height=CHIP_H)
+            self._chip_id = dpg.add_button(label="", height=CHIP_H)
+            self._format = dpg.add_button(label="", height=CHIP_H)
         self._format_group = self._format
+        self._fullscreen = dpg.add_button(label=theme.ICON_FULLSCREEN, width=30, height=CHIP_H + 4,
+                                          parent=self._bottom_bar, pos=(0, 7), show=False,
+                                          callback=lambda: self._fullscreen_clicked())
         use_font(self._info, "small")
-        use_font(self._format, "small")
+        use_font(self._fullscreen, "icon")
+        bind(self._fullscreen, "pill_overlay")
+        for chip in (self._chip_time, self._chip_fps, self._chip_id, self._format):
+            use_font(chip, "stat")  # video statistics: Medium
+            bind(chip, "pill_overlay")
         self._capsule = None
 
     # --- public -----------------------------------------------------------
@@ -140,6 +196,7 @@ class CameraView:
         else:
             cam = manager.camera(camera_id)
             title = camera_display_name(cam.model, cam.serial_number)
+            self._ip = cam.ip_address or ""
         dpg.set_value(self._title, title)
         dpg.set_item_user_data(self._title, title)
         self._badge = None
@@ -147,26 +204,64 @@ class CameraView:
         dpg.show_item(self._message)
         self._message_key = None
         bind(self.tile, "tile" if camera_id is not None else "tile_empty")
+        dpg.configure_item(self._empty_badge, show=camera_id is None)
+        dpg.configure_item(self._empty_sub, show=camera_id is None)
+        dpg.configure_item(self._title_dot, show=camera_id is not None)
+        dpg.configure_item(self._fullscreen, show=camera_id is not None and self._size[1] >= MIN_HEIGHT_FOR_BOTTOM_BAR)
+        self._rec_key = None
+        self._chip_widths = None
         self._style_message()
         if self._size != (0, 0):
             self._draw_bars()
 
+    def set_selected(self, selected: bool) -> None:
+        if selected != self.selected:
+            self.selected = selected
+            bind(self.frame, "tile_frame_selected" if selected else "tile_frame")
+
+    def set_focused(self, focused: bool) -> None:
+        """Shown alone in the camera area: the button returns to the grid."""
+        self.focused = focused
+        dpg.configure_item(self._fullscreen, label=theme.ICON_BACK_TO_GRID if focused else theme.ICON_FULLSCREEN)
+
+    def _fullscreen_clicked(self) -> None:
+        if self.camera_id is not None and self._on_fullscreen is not None:
+            self._on_fullscreen(self.camera_id)
+
+    def _clicked(self) -> None:
+        if self.camera_id is not None and self._on_click is not None:
+            self._on_click(self.camera_id)
+
+    def _draw_empty_badge(self) -> None:
+        dpg.delete_item(self._empty_circle, children_only=True)
+        dpg.delete_item(self._empty_slash, children_only=True)
+        r = EMPTY_BADGE / 2
+        dpg.draw_circle((r, r), r - 1, fill=COLORS["control"], color=COLORS["border"], thickness=1,
+                        parent=self._empty_circle)
+        dpg.configure_item(self._empty_icon, color=COLORS["text_secondary"])
+        dpg.draw_line((r - 13, r - 13), (r + 13, r + 13), color=COLORS["text_secondary"], thickness=2,
+                      parent=self._empty_slash)
+
     def _style_message(self) -> None:
         empty = self.camera_id is None
-        dpg.configure_item(self._message, color=COLORS["text_tertiary"] if empty else OVERLAY_TEXT_DIM)
+        dpg.configure_item(self._message, color=COLORS["text"] if empty else OVERLAY_TEXT_DIM)
+        dpg.configure_item(self._empty_sub, color=COLORS["text_secondary"])
 
     def set_size(self, width: int, height: int) -> None:
+        dpg.configure_item(self.frame, width=width, height=height)
+        width, height = max(1, width - 2 * FRAME), max(1, height - 2 * FRAME)
         if (width, height) == self._size:
             return
         self._size = (width, height)
         dpg.configure_item(self.tile, width=width, height=height)
-        dpg.configure_item(self._top_bar, width=width, height=BAR_HEIGHT)
+        dpg.configure_item(self._top_bar, width=width, height=TOP_BAR_HEIGHT)
         dpg.set_item_pos(self._top_bar, [0, 0])
         dpg.configure_item(self._bottom_bar, width=width, height=BAR_HEIGHT)
         dpg.set_item_pos(self._bottom_bar, [0, height - BAR_HEIGHT])
         compact = height < MIN_HEIGHT_FOR_BOTTOM_BAR
-        dpg.configure_item(self._info, show=not compact)
-        dpg.configure_item(self._format_group, show=not compact)
+        dpg.configure_item(self._chips, show=not compact)
+        dpg.configure_item(self._fullscreen, show=not compact and self.camera_id is not None)
+        dpg.set_item_pos(self._fullscreen, [width - TEXT_X - 30, 7])
         self._draw_bars()
         self._message_key = None
         self._layout_image()
@@ -186,20 +281,27 @@ class CameraView:
         self._place_message()
         if self.camera_id is None:
             self._set_badge(None, None, None)
-            dpg.set_value(self._info, "")
+            self._set_rec(None, None, None)
+            self._set_chips(None)
             return
 
         state = manager.state(self.camera_id)
+        dot_key = (state, self._revision)
+        if dot_key != self._dot_key:
+            self._dot_key = dot_key
+            dpg.configure_item(self._title_dot, color=STATE_COLORS[state])
         current = recording.camera_recording(self.camera_id) if recording is not None else None
+        # The state is the dot before the name; the capsule on the right shows the camera's address.
+        self._set_badge(self._ip or STATE_LABELS[state], CAPSULE_BG, None)
         if state is CameraState.ACQUIRING and current is not None:
             # This camera's own recording time (cameras record independently).
             blink = int(time.monotonic() * 2) % 2 == 0
-            self._set_badge(f"REC  {format_duration(current.elapsed_s)}", (*COLORS["error"], 235),
-                            (255, 255, 255) if blink else (255, 255, 255, 90))
+            self._set_rec(f"REC  {format_duration(current.elapsed_s)}", (*COLORS["error"], 235),
+                          (255, 255, 255) if blink else (255, 255, 255, 90))
         elif state is CameraState.ERROR:
-            self._set_badge("ERROR", (*COLORS["error"], 200), (255, 255, 255))
+            self._set_rec("ERROR", (*COLORS["error"], 200), (255, 255, 255))
         else:
-            self._set_badge(STATE_LABELS[state], CAPSULE_BG, STATE_COLORS[state])
+            self._set_rec(None, None, None)
 
         frame = manager.latest_frame(self.camera_id)
         if frame is not None:
@@ -208,7 +310,7 @@ class CameraView:
             fmt = f"{frame.width} × {frame.height}  ·  {frame.pixel_format}"
             if fmt != self._format_text:
                 self._format_text = fmt
-                dpg.set_value(self._format, fmt)
+                dpg.configure_item(self._format, label=fmt)
                 self._place_format()
 
         now = time.perf_counter()
@@ -220,12 +322,11 @@ class CameraView:
 
         stats = manager.stats(self.camera_id)
         if stats is None:
-            dpg.set_value(self._info, "")
+            self._set_chips(None)
         else:
             # Real-time timestamp of the frame on screen (host wall clock, ms), then rate and frame id.
             frame_id = "–" if stats.last_frame_id is None else f"{stats.last_frame_id:,}"
-            stamp = f"{self._frame_time}   ·   " if self._frame_time else ""
-            dpg.set_value(self._info, f"{stamp}{stats.measured_fps:.1f} fps   ·   #{frame_id}")
+            self._set_chips((self._frame_time, f"{stats.measured_fps:.1f} fps", f"#{frame_id}"))
         error = manager.last_error(self.camera_id)
         retry = reconnect.state(self.camera_id) if reconnect is not None and error else None
         if retry is not None:
@@ -237,15 +338,55 @@ class CameraView:
         if error:
             # Keep the last image visible; report the error on the bottom bar (or centre if no image).
             dpg.set_value(self._info, error)
-            dpg.configure_item(self._info, color=COLORS["error"])
+            dpg.configure_item(self._info, color=COLORS["error"], show=True)
+            dpg.configure_item(self._chips, show=False)
             if self._image is None:
                 dpg.set_value(self._message, error)
                 dpg.show_item(self._message)
-        else:
-            dpg.configure_item(self._info, color=OVERLAY_TEXT_DIM)
+        elif dpg.is_item_shown(self._info):
+            dpg.configure_item(self._info, show=False)
+            dpg.configure_item(self._chips, show=self._size[1] >= MIN_HEIGHT_FOR_BOTTOM_BAR)
+
+    def _set_rec(self, label: str | None, bg, dot) -> None:
+        """Badge under the name: "● REC  00:00:04" while recording, or ERROR."""
+        key = (label, bg, dot, self._revision)
+        if key == self._rec_key:
+            return
+        self._rec_key = key
+        if self._rec_capsule is not None and dpg.does_item_exist(self._rec_capsule):
+            dpg.delete_item(self._rec_capsule)
+        self._rec_capsule = None
+        if label is None:
+            dpg.set_value(self._rec_dot, "")
+            dpg.set_value(self._rec_label, "")
+            return
+        x0, y0 = TEXT_X - 2, REC_Y
+        width = 10 + 16 + text_width(label, "caption") + 12
+        self._rec_capsule = dpg.draw_rectangle((x0, y0), (x0 + width, y0 + CAPSULE_H), fill=bg, color=(0, 0, 0, 0),
+                                               rounding=CAPSULE_H / 2, thickness=0, parent=self._top_draw)
+        dpg.set_value(self._rec_dot, "●")
+        dpg.configure_item(self._rec_dot, color=dot)
+        dpg.set_item_pos(self._rec_dot, [x0 + 10, y0 + 2])
+        dpg.set_value(self._rec_label, label)
+        dpg.set_item_pos(self._rec_label, [x0 + 26, y0 + 2])
+
+    def _set_chips(self, values: tuple[str, str, str] | None) -> None:
+        """Bottom-left chips: frame time, FPS, frame id (hidden when not streaming)."""
+        if values is None:
+            if dpg.is_item_shown(self._chip_time):
+                for chip in (self._chip_time, self._chip_fps, self._chip_id, self._format):
+                    dpg.configure_item(chip, show=False)
+            return
+        if not dpg.is_item_shown(self._format) and self._format_text:
+            self._place_format()
+        for chip, value in zip((self._chip_time, self._chip_fps, self._chip_id), values):
+            if dpg.get_item_label(chip) != value:
+                dpg.configure_item(chip, label=value)
+            if bool(value) != dpg.is_item_shown(chip):
+                dpg.configure_item(chip, show=bool(value))
 
     def delete(self) -> None:
-        dpg.delete_item(self.tile)
+        dpg.delete_item(self.frame)
         self._image = None
         self._drop_texture()
 
@@ -261,6 +402,7 @@ class CameraView:
         h = BAR_HEIGHT
         clear, dark = (0, 0, 0, 0), (0, 0, 0, GRADIENT_ALPHA)
         for drawlist, top in ((self._top_draw, True), (self._bottom_draw, False)):
+            h = TOP_BAR_HEIGHT if top else BAR_HEIGHT
             dpg.delete_item(drawlist, children_only=True)
             dpg.configure_item(drawlist, width=width, height=h)
             colors = [dark, dark, clear, clear] if top else [clear, clear, dark, dark]
@@ -275,6 +417,11 @@ class CameraView:
                 _corner_mask(drawlist, width - r, h - r, (width, h), mask, r)
         self._capsule = None
         self._badge = None
+        self._rec_capsule = None
+        self._rec_key = None
+        self._dot_key = None
+        self._message_key = None
+        self._draw_empty_badge()
 
     def _set_badge(self, label: str | None, bg, dot) -> None:
         key = (label, bg, dot, self._revision, self._size[0])
@@ -289,17 +436,21 @@ class CameraView:
             dpg.set_value(self._dot, "")
             return
         label_w = text_width(label, "caption")
-        capsule_w = 10 + 10 + 6 + label_w + 12
+        dot_w = 16 if dot is not None else 0
+        capsule_w = 10 + dot_w + label_w + 12
         x0 = self._size[0] - 12 - capsule_w
         y0 = (BAR_HEIGHT - CAPSULE_H) // 2 - 2
         self._capsule = dpg.draw_rectangle((x0, y0), (x0 + capsule_w, y0 + CAPSULE_H), fill=bg, color=(0, 0, 0, 0),
                                            rounding=CAPSULE_H / 2, thickness=0, parent=self._top_draw)
-        dpg.set_value(self._dot, "●")
-        dpg.configure_item(self._dot, color=dot)
-        dpg.set_item_pos(self._dot, [x0 + 10, y0 + 2])
+        if dot is not None:
+            dpg.set_value(self._dot, "●")
+            dpg.configure_item(self._dot, color=dot)
+            dpg.set_item_pos(self._dot, [x0 + 10, y0 + 2])
+        else:
+            dpg.set_value(self._dot, "")
         dpg.set_value(self._state, label)
-        dpg.set_item_pos(self._state, [x0 + 26, y0 + 2])
-        self._fit_title(x0 - TEXT_X - 10)
+        dpg.set_item_pos(self._state, [x0 + 10 + dot_w, y0 + 2])
+        self._fit_title(x0 - TEXT_X - 16 - 10)
 
     def _fit_title(self, available: float) -> None:
         """Elide the camera name so it never runs under the state capsule."""
@@ -311,12 +462,13 @@ class CameraView:
         dpg.set_value(self._title, full if text == full else (text.rstrip() + "…" if text else ""))
 
     def _place_format(self) -> None:
-        width = text_width(self._format_text, "small")
-        info_w = text_width(dpg.get_value(self._info) or "", "small")
-        fits = (TEXT_X + info_w + 24 + width + TEXT_X <= self._size[0]
-                and self._size[1] >= MIN_HEIGHT_FOR_BOTTOM_BAR)
+        width = text_width(self._format_text, "small") + 2 * CHIP_PAD
+        chips = [dpg.get_item_label(c) or "" for c in (self._chip_time, self._chip_fps, self._chip_id)]
+        info_w = sum(text_width(c, "small") + 2 * CHIP_PAD + 6 for c in chips if c)
+        fits = (TEXT_X + info_w + width + 6 + 30 + 2 * TEXT_X <= self._size[0]
+                and self._size[1] >= MIN_HEIGHT_FOR_BOTTOM_BAR and bool(self._format_text)
+                and dpg.is_item_shown(self._chip_time))
         dpg.configure_item(self._format, show=fits)
-        dpg.set_item_pos(self._format, [max(TEXT_X, self._size[0] - TEXT_X - width), 13])
 
     def _place_message(self) -> None:
         if not dpg.is_item_shown(self._message):
@@ -329,7 +481,16 @@ class CameraView:
         width = text_width(text, "heading")
         x = max(TEXT_X, (self._size[0] - width) / 2)
         dpg.configure_item(self._message, wrap=max(50, self._size[0] - 2 * TEXT_X))
-        dpg.set_item_pos(self._message, [x, max(BAR_HEIGHT + 4, self._size[1] // 2 - 12)])
+        empty = self.camera_id is None
+        badge_room = EMPTY_BADGE + 12 if empty and self._size[1] >= EMPTY_BADGE + 60 else 0
+        y = max(BAR_HEIGHT + 4, self._size[1] // 2 - 12 + badge_room // 2)
+        dpg.set_item_pos(self._message, [x, y])
+        if empty:
+            dpg.configure_item(self._empty_badge, show=bool(badge_room))
+            dpg.set_item_pos(self._empty_badge, [(self._size[0] - EMPTY_BADGE) // 2, y - badge_room])
+            sub = dpg.get_value(self._empty_sub)
+            dpg.configure_item(self._empty_sub, show=bool(badge_room))
+            dpg.set_item_pos(self._empty_sub, [max(TEXT_X, (self._size[0] - text_width(sub, "small")) / 2), y + 26])
         self._place_format()
 
     # --- internals --------------------------------------------------------

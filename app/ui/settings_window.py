@@ -19,7 +19,7 @@ from app.services.app_services import AppServices
 from app.services.configuration import save_config
 from app.ui.folder_picker import FolderPicker
 from app.ui.multiview import LAYOUTS
-from app.ui.theme import ACCENTS, COLORS, DEFAULT_ACCENT, bind, caption, nudge, secondary_text, use_font
+from app.ui.theme import ACCENT_CHOICES, COLORS, DEFAULT_ACCENT, bind, caption, nudge, secondary_text, use_font
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class SettingsWindow:
         with dpg.window(label="Settings", width=680, height=660, show=False, pos=(300, 70), no_collapse=True) as self.window:
             with self._section("Appearance"):
                 self._theme = self._row("Theme", lambda: dpg.add_combo(["dark", "light"], width=FIELD_WIDTH))
-                self._accent = self._row("Accent colour", lambda: dpg.add_combo(list(ACCENTS), width=FIELD_WIDTH))
+                self._accent = self._row("Accent colour", lambda: dpg.add_combo(list(ACCENT_CHOICES), width=FIELD_WIDTH))
                 self._layout = self._row("Default layout", lambda: dpg.add_combo(list(LAYOUTS), width=FIELD_WIDTH))
             with self._section("Recording"):
                 self._rec_dir = self._row("Recordings folder", lambda: self._folder_field("Recordings folder"))

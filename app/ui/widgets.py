@@ -58,7 +58,7 @@ def switch_rgba(on: bool, enabled: bool, track_on: tuple, track_off: tuple, knob
 
 
 def _paint() -> None:
-    track_on, track_off = theme.color("success"), theme.color("control_active")
+    track_on, track_off = theme.color("accent"), theme.color("control_active")
     knob = theme.color("knob")
     for key in list(_textures):
         on, enabled = key.startswith("on"), not key.endswith("disabled")
@@ -81,6 +81,51 @@ def switch_texture(on: bool, enabled: bool = True) -> int | str:
             theme.on_apply(_paint)
             _listening = True
     return _textures[("on" if on else "off") + ("" if enabled else "_disabled")]
+
+
+class SectionCard:
+    """Collapsible section as one rounded card: a header row (icon, title, chevron on the right)
+    that toggles the content below it. Put the section's widgets in ``content``."""
+
+    TITLE_INDENT = " " * 11  # room for the icon drawn over the header row
+
+    def __init__(self, parent: int | str | None, title: str, glyph: str, default_open: bool = True,
+                 badge: bool = False) -> None:
+        kw = {"parent": parent} if parent is not None else {}
+        self._open = default_open
+        self._width = -1
+        self.card = dpg.add_child_window(auto_resize_y=True, no_scrollbar=True, no_scroll_with_mouse=True, **kw)
+        theme.bind(self.card, "section_card")
+        self._hit = dpg.add_selectable(label=self.TITLE_INDENT + title, parent=self.card, width=400, height=26,
+                                       callback=lambda: self.set_open(not self._open))
+        if badge:  # the icon on an accent-tinted rounded square
+            self._icon = dpg.add_button(label=glyph, parent=self.card, width=28, height=26, pos=(12, 8))
+            theme.use_font(self._icon, "icon")
+        else:
+            self._icon = theme.icon(glyph, parent=self.card, pos=(18, 11))
+        self._chevron = theme.icon(theme.ICON_CHEVRON_UP if default_open else theme.ICON_CHEVRON_DOWN,
+                                   parent=self.card, pos=(0, 12))
+        self.content = dpg.add_group(parent=self.card, show=default_open)
+        theme.use_font(self._hit, "section")
+        theme.bind(self._icon, "icon_badge" if badge else "text_secondary")
+        theme.bind(self._chevron, "text_secondary")
+
+    @property
+    def is_open(self) -> bool:
+        return self._open
+
+    def set_open(self, open_: bool) -> None:
+        self._open = bool(open_)
+        dpg.configure_item(self.content, show=self._open)
+        dpg.configure_item(self._chevron, default_value=theme.ICON_CHEVRON_UP if self._open else theme.ICON_CHEVRON_DOWN)
+
+    def update(self) -> None:
+        """Keep the chevron at the right edge (call every frame; cheap when the width is unchanged)."""
+        width = dpg.get_item_rect_size(self.card)[0]
+        if width != self._width and width > 0:
+            self._width = width
+            dpg.set_item_pos(self._chevron, [width - 36, 12])
+            dpg.configure_item(self._hit, width=max(100, width - 32))  # the whole header row is clickable
 
 
 class Splitter:

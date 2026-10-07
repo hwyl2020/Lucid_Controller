@@ -15,7 +15,8 @@ from app.services.camera_status_service import CameraStatusService
 from app.services.network_service import NetworkService
 from app.services.recording_service import RecordingService
 from app.ui.camera_row import CameraRow
-from app.ui.theme import caption, secondary_text
+from app.ui import theme
+from app.ui.theme import bind, secondary_text
 
 
 class CameraSidebar:
@@ -27,6 +28,7 @@ class CameraSidebar:
         recording: RecordingService,
         network: NetworkService,
         on_property_grid: Callable[[str], None],
+        on_scan: Callable[[], None] | None = None,
     ) -> None:
         self._parent = parent
         self._manager = manager
@@ -37,9 +39,23 @@ class CameraSidebar:
         self.selected: str | None = None
         self.rows: dict[str, CameraRow] = {}
 
-        with dpg.group(horizontal=True, parent=parent):
-            caption("Cameras")
-            self._count = secondary_text("0")
+        with dpg.table(parent=parent, header_row=False, policy=dpg.mvTable_SizingFixedFit, borders_innerH=False,
+                       borders_outerH=False, borders_innerV=False, borders_outerV=False) as head:
+            dpg.add_table_column(width_stretch=True)
+            dpg.add_table_column(width_fixed=True)
+            with dpg.table_row():
+                with dpg.group(horizontal=True, horizontal_spacing=10):
+                    with theme.nudge(2):
+                        title = dpg.add_text("Cameras")
+                    self._count = dpg.add_button(label="0", height=24)
+                self._scan = dpg.add_button(label=theme.ICON_REFRESH, width=30, height=28,
+                                            callback=lambda: on_scan() if on_scan else None, show=on_scan is not None)
+        bind(head, "tight")
+        theme.use_font(title, "title")
+        theme.use_font(self._count, "caption")
+        theme.use_font(self._scan, "icon")
+        theme.bind(self._count, "pill_neutral")
+        theme.bind(self._scan, "icon_ghost")
         self._empty = secondary_text("No cameras found yet. Connect a camera: it appears here automatically.",
                                      parent=parent, wrap=300)
         self._add_new_rows()
@@ -66,7 +82,7 @@ class CameraSidebar:
                 self._parent, self._statuses.status(camera_id), self._manager, self._statuses, self._recording,
                 self._network, on_select=self.select, on_property_grid=self._on_property_grid,
             )
-        dpg.set_value(self._count, str(len(self.rows)))
+        dpg.configure_item(self._count, label=str(len(self.rows)))
         dpg.configure_item(self._empty, show=not self.rows)
         if self.selected is None and self.rows:
             self.select(next(iter(self.rows)))

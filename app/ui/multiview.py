@@ -37,7 +37,11 @@ class MultiView:
         layout: str = "2x2",
         recording: RecordingService | None = None,
         reconnect: ReconnectService | None = None,
+        on_select=None,
     ) -> None:
+        self._on_select = on_select  # clicking a tile selects its camera
+        self.focus: str | None = None  # camera shown alone (fullscreen button), else None
+        self.selected: str | None = None  # the selected camera's tile gets an accent border
         self._manager = manager
         self._recording = recording
         self._reconnect = reconnect
@@ -63,7 +67,17 @@ class MultiView:
     def layout(self) -> str:
         return self._layout
 
+    def toggle_focus(self, camera_id: str) -> None:
+        """Fullscreen button: show this camera alone in the camera area; again to return to the grid."""
+        self.focus = None if self.focus == camera_id else camera_id
+        self._build()
+
     def set_layout(self, layout: str) -> None:
+        if self.focus is not None and layout in LAYOUTS:
+            self.focus = None  # choosing a layout leaves fullscreen
+            if layout == self._layout:
+                self._build()
+                return
         if layout == self._layout or layout not in LAYOUTS:
             return
         self._layout = layout
@@ -75,6 +89,9 @@ class MultiView:
         return next((v.display_fps for v in self._views if v.camera_id == camera_id), 0.0)
 
     def update(self) -> None:
+        if self.focus is not None and self.focus not in self._manager.camera_ids:
+            self.focus = None  # the camera shown fullscreen was unplugged
+            self._build()
         if self._manager.camera_ids != self._camera_ids:
             self._assign_new_cameras()  # hot-plug: a camera was added while running
         width, height = dpg.get_item_rect_size(self._grid)
@@ -83,6 +100,7 @@ class MultiView:
             self._resize_tiles()
         for view in self._views:
             view.update(self._manager, self._recording, self._reconnect)
+            view.set_selected(view.camera_id is not None and view.camera_id == self.selected)
 
     def _build(self) -> None:
         for view in self._views:
@@ -91,13 +109,17 @@ class MultiView:
             dpg.delete_item(row)
         self._views, self._rows = [], []
 
-        columns, rows = LAYOUTS[self._layout]
+        columns, rows = LAYOUTS[self._layout] if self.focus is None else (1, 1)
         camera_ids = self._camera_ids = self._manager.camera_ids
+        if self.focus is not None:
+            camera_ids = [self.focus]
         for _ in range(rows):
             row = dpg.add_group(horizontal=True, horizontal_spacing=TILE_SPACING, parent=self._grid)
             self._rows.append(row)
             for _ in range(columns):
-                view = CameraView(row, self._texture_registry)
+                view = CameraView(row, self._texture_registry, on_click=self._on_select,
+                                  on_fullscreen=self.toggle_focus)
+                view.set_focused(self.focus is not None)
                 index = len(self._views)
                 view.assign(camera_ids[index] if index < len(camera_ids) else None, self._manager)
                 self._views.append(view)
@@ -107,6 +129,9 @@ class MultiView:
         """Follow the camera list: tiles of removed cameras are freed, new cameras go into free tiles;
         other tiles keep their camera."""
         camera_ids = self._manager.camera_ids
+        if self.focus is not None:
+            self._camera_ids = camera_ids  # fullscreen shows one camera; the grid refills on return
+            return
         present = set(camera_ids)
         for view in self._views:
             if view.camera_id is not None and view.camera_id not in present:
@@ -125,7 +150,7 @@ class MultiView:
         width, height = self._grid_size
         if width <= 0 or height <= 0:
             return
-        columns, rows = LAYOUTS[self._layout]
+        columns, rows = LAYOUTS[self._layout] if self.focus is None else (1, 1)
         tile_w = (width - TILE_SPACING * (columns - 1)) // columns
         tile_h = (height - TILE_SPACING * (rows - 1)) // rows
         for view in self._views:

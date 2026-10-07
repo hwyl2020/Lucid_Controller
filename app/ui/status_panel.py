@@ -18,7 +18,7 @@ from app.models.camera_status import CameraStatus
 from app.services.camera_status_service import CameraStatusService
 from app.ui import theme
 from app.ui.theme import STATE_COLORS, STATE_NAMES, bind, caption, secondary_text, use_font
-from app.ui.widgets import Splitter
+from app.ui.widgets import SectionCard, Splitter
 
 ROW_HEIGHT = 29  # body font row in a compact table
 HEADER_ROW_HEIGHT = 23
@@ -28,21 +28,29 @@ MAX_VISIBLE_ROWS = 6
 COLUMNS = (("Camera", 300.0), ("Status", 120.0), ("Bandwidth", 150.0), ("FPS", 90.0), ("Frames", 120.0), ("", 0.0))
 DASH = "—"
 MIN_BODY_HEIGHT = 60
+STATUS_PILLS = {CameraState.ACQUIRING: "pill_success", CameraState.ERROR: "pill_error",
+                CameraState.CONNECTED: "pill_accent"}
 
 
 class _Line:
     def __init__(self, table: int | str, status: CameraStatus) -> None:
         with dpg.table_row(parent=table):
-            name = dpg.add_text(status.display_name)
+            with dpg.group(horizontal=True, horizontal_spacing=8):
+                self.name_dot = dpg.add_text("●")
+                name = dpg.add_text(status.display_name)
             with dpg.group(horizontal=True, horizontal_spacing=6):
-                self.dot = dpg.add_text("●")
-                self.state = dpg.add_text("")
+                self.dot = dpg.add_text("●", show=False)
+                self.state = dpg.add_button(label="", height=22)
             self.bandwidth = dpg.add_text(DASH)
             self.fps = dpg.add_text(DASH)
             self.frames = dpg.add_text(DASH)
             dpg.add_text("")  # filler cell for the stretch column
+        for item in (self.bandwidth, self.fps, self.frames):
+            use_font(item, "stat")  # numbers: Medium
         use_font(name, "heading")
+        use_font(self.name_dot, "caption")
         use_font(self.dot, "caption")
+        use_font(self.state, "caption")
         self._last: tuple | None = None
 
     def update(self, status: CameraStatus) -> None:
@@ -59,14 +67,16 @@ class _Line:
         self._last = shown
         color = STATE_COLORS[status.state]
         dpg.configure_item(self.dot, color=color)
-        dpg.set_value(self.state, STATE_NAMES[status.state])
+        dpg.configure_item(self.name_dot, color=color)
+        dpg.configure_item(self.state, label=f"●  {STATE_NAMES[status.state]}")
+        bind(self.state, STATUS_PILLS.get(status.state, "pill_neutral"))
         dpg.set_value(self.bandwidth, shown[1])
         dpg.set_value(self.fps, shown[2])
         dpg.set_value(self.frames, shown[3])
 
     def values(self) -> dict[str, str]:
         return {
-            "Status": dpg.get_value(self.state),
+            "Status": dpg.get_item_label(self.state).removeprefix("●").strip(),
             "Bandwidth": dpg.get_value(self.bandwidth),
             "FPS": dpg.get_value(self.fps),
             "Frames": dpg.get_value(self.frames),
@@ -89,10 +99,10 @@ class StatusPanel:
             self.splitter = Splitter(None, vertical=False, get_size=self.body_height, set_size=self._drag_to,
                                      minimum=MIN_BODY_HEIGHT, maximum=max_height, sign=-1,
                                      on_release=self._released)
-            self.header = dpg.add_collapsing_header(label="Camera Status", default_open=default_open)
-            use_font(self.header, "heading")
+            self.section = SectionCard(None, "Camera Status", theme.ICON_PULSE, default_open, badge=True)
+            self.header = self.section.content
             with dpg.child_window(parent=self.header, height=HEADER_ROW_HEIGHT + ROW_HEIGHT + BODY_PADDING,
-                                  border=True) as self._body:
+                                  border=False) as self._body:
                 with dpg.group() as stack:  # no gap between the column captions and the rows
                     with dpg.group() as self._columns_group:
                         with dpg.table(header_row=False, borders_innerH=False, borders_outerH=False,
@@ -116,7 +126,7 @@ class StatusPanel:
                                 else:
                                     dpg.add_table_column(width_stretch=True)
                 self._empty = secondary_text("No cameras", show=False)
-        bind(self._body, "surface")
+        bind(self._body, "section_body")
         bind(stack, "stack")
         bind(self._columns, "compact_table")
         bind(self._table, "compact_table")
@@ -124,10 +134,10 @@ class StatusPanel:
 
     @property
     def is_open(self) -> bool:
-        return bool(dpg.get_value(self.header))
+        return self.section.is_open
 
     def set_open(self, open_: bool) -> None:
-        dpg.set_value(self.header, open_)
+        self.section.set_open(open_)
 
     def line(self, camera_id: str) -> _Line:
         return self._lines[camera_id]
@@ -157,6 +167,7 @@ class StatusPanel:
             self._on_resized(int(height))
 
     def update(self) -> None:
+        self.section.update()
         is_open = self.is_open
         if dpg.is_item_shown(self.splitter.button) != is_open:
             dpg.configure_item(self.splitter.button, show=is_open)
