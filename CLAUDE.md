@@ -169,7 +169,7 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Profiles** (`profiles/*.json`) and **sessions** (`sessions/*.json`, gitignored):
   - `SettingsApplier` captures and applies settings in the order format → ROI → exposure → gain → frame rate, through `CameraControlService`, so values are clamped to the target camera.
   - Failures become warnings rather than exceptions.
-- **Settings window** (File ▸ Settings): the recordings and images folders show the full path, plus a **Browse…** button.
+- **Settings window** (File ▸ Settings): the single **Save folder** (recordings and images) shows the full path, plus a **Browse…** button.
   - The button opens the native folder dialog (`ui/folder_picker.py`: tkinter `askdirectory` on its own thread with a hidden topmost root; the result comes back through `poll()` on the UI thread). Streams keep running while it is open.
   - tkinter is therefore not excluded in `installer/visionx.spec`.
   - It edits and saves `config.json`, and applies the theme, log level, auto-reconnect and recording settings live. Recording settings take effect on the next recording.
@@ -344,7 +344,7 @@ A missing optional node must hide or disable the control, never crash. Expected 
 
 `app/{ui,cameras,acquisition,recording,services,models,resources}`, plus `tests/`, `profiles/`, `docs/`, `scripts/`. Runtime output goes in `recordings/`, `snapshots/` and `logs/`, which should be gitignored. Once a structure exists, follow it rather than the spec, and don't create placeholder files ahead of need.
 
-Recording output layout: `Recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_NN/` plus `session.json`. The JSON holds camera model, serial, IP, resolution, pixel format, FPS, exposure, gain, trigger and app version.
+Recording output layout (since 0.2.2, on request): `<save folder>/YYYY-MM-DD/Camera_NN_<model>_<serial>/Recording_<time>.<ext>` plus `Images/`; see "Recording and snapshots". The optional `Recording_<time>.json` holds camera model, serial, IP, resolution, pixel format, FPS, exposure, gain, trigger and app version.
 
 ## Name and brand
 
