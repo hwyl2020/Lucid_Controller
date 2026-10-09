@@ -121,11 +121,15 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 
 ### Recording and snapshots
 
-- **`RecordingService`** (`app/services/recording_service.py`) is the UI's entry point. It creates `recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_NN/` plus `session.json` (app version, mode, start/stop times, per-camera metadata and frame/drop counts).
+- **`RecordingService`** (`app/services/recording_service.py`) is the UI's entry point.
+- **Folder layout (on request: one folder per day, no session folders):** `<save folder>/YYYY-MM-DD/Camera_NN_<model>_<serial>/` holds `Recording_YYYYMMDD_HHMMSS.<mp4|avi|mov|mkv>` (raw: `.raw` + `.csv`; `_2`, `_3`... on a name clash) and an `Images/` sub-folder for captures.
+  - `camera_folder(id, when)` finds the camera's folder of that day by model and serial, or creates the next number. A camera therefore keeps its number all day, and all cameras share the day folder.
+  - `start()` returns the day folder; `stop()` / `camera_recording()` give the recording file(s).
+  - Images and recordings use **one save folder** (`recording.directory`; Settings ▸ Save folder). `snapshots.directory` is no longer used.
 - **Info files** (`recording.save_metadata`, Settings ▸ "Recording info files", **off by default**):
-  - On: each camera folder also gets `frames.csv` (video frame → camera frame id + timestamp), and the session gets `session.json`.
-  - Off: a video recording is just `video.<ext>`, with no `session.json`.
-  - Raw always writes `frames.csv`, because it is the index needed to read `frames.raw`.
+  - On: each recording also gets `Recording_<time>.csv` (video frame → camera frame id + timestamp) and `Recording_<time>.json` (camera settings, start/stop, counts).
+  - Off: a video recording is just the video file.
+  - Raw always writes its `.csv`, because it is the index needed to read the `.raw` (`read_raw_sequence(path)` accepts the file or stem; old `frames.raw` folders still read).
   - The setting is captured per session at start (`_Session.save_metadata`).
 - **Burned-in timestamp (video only):**
   - `VideoFileWriter(stamp=True)` draws the frame's real-time timestamp (`Frame.timestamp`, local `YYYY-MM-DD HH:MM:SS.mmm`) top-left, white on a darkened box, about 3% of the frame height (`video_writer.draw_timestamp`).

@@ -51,11 +51,24 @@ class FrameWriter(Protocol):
     def close(self) -> None: ...
 
 
+def raw_paths(path: Path) -> tuple[Path, Path]:
+    """(data file, index file) of a raw recording: a folder holding frames.raw + frames.csv, or a
+    recording stem such as ``Camera_01_.../Recording_20261009_101523`` (``.raw`` + ``.csv``)."""
+    if path.is_dir():
+        return path / RAW_DATA_FILE, path / INDEX_FILE
+    base = path.with_suffix("") if path.suffix in (".raw", ".csv") else path
+    return base.with_name(base.name + ".raw"), base.with_name(base.name + ".csv")
+
+
 class RawSequenceWriter:
-    def __init__(self, directory: Path) -> None:
+    """``stem``: write ``<stem>.raw`` + ``<stem>.csv`` in ``directory`` (default frames.raw / frames.csv)."""
+
+    def __init__(self, directory: Path, stem: str | None = None) -> None:
         directory.mkdir(parents=True, exist_ok=True)
-        self._data = open(directory / RAW_DATA_FILE, "wb", buffering=WRITE_BUFFER_BYTES)
-        self._index_file = open(directory / INDEX_FILE, "w", newline="", encoding="utf-8")
+        data_path, index_path = raw_paths(directory / stem) if stem else raw_paths(directory)
+        self.path = data_path
+        self._data = open(data_path, "wb", buffering=WRITE_BUFFER_BYTES)
+        self._index_file = open(index_path, "w", newline="", encoding="utf-8")
         self._index = csv.writer(self._index_file)
         self._index.writerow(INDEX_FIELDS)
         self._offset = 0
@@ -76,9 +89,12 @@ class RawSequenceWriter:
         self._index_file.close()
 
 
-def read_raw_sequence(directory: Path) -> Iterator[Frame]:
-    """Yield frames recorded by RawSequenceWriter (camera_id is the directory name)."""
-    with open(directory / INDEX_FILE, newline="", encoding="utf-8") as index, open(directory / RAW_DATA_FILE, "rb") as data:
+def read_raw_sequence(path: Path) -> Iterator[Frame]:
+    """Yield frames recorded by RawSequenceWriter: ``path`` is its folder or its recording file
+    (``.raw`` / ``.csv`` / stem). camera_id is the camera folder's name."""
+    data_path, index_path = raw_paths(path)
+    directory = data_path.parent if not path.is_dir() else path
+    with open(index_path, newline="", encoding="utf-8") as index, open(data_path, "rb") as data:
         for row in csv.DictReader(index):
             data.seek(int(row["offset"]))
             buffer = data.read(int(row["nbytes"]))

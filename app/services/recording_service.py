@@ -1,14 +1,22 @@
-"""Recording sessions and snapshots for the UI.
+"""Recordings and image captures for the UI.
 
-Several sessions can run at once so cameras record independently (camera A recording while B is
-not); a camera belongs to at most one active session. Session layout (per spec):
-    <recordings>/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS[_n]/Camera_01/ ... + session.json
+Cameras record independently (camera A recording while B is not); a camera belongs to at most one
+active session. Everything is filed by day, then by camera (one folder per physical camera, its
+number kept for the whole day), so all cameras' recordings and images of a day sit side by side:
+
+    <save folder>/YYYY-MM-DD/
+        Camera_01_TRI122S-C_262503318/
+            Recording_20261009_101523.mp4      (raw: .raw + .csv)
+            Recording_20261009_101523.csv/.json  (info files, when recording.save_metadata is on)
+            Images/TRI122S-C_262503318_20261009_101700_123_f42.png ...
+        Camera_02_TRI122S-C_262503319/ ...
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import threading
 import time
@@ -28,6 +36,21 @@ from app.camera_log import for_camera
 logger = logging.getLogger(__name__)
 
 DISK_CHECK_INTERVAL_S = 1.0
+IMAGES_FOLDER = "Images"
+_CAMERA_FOLDER = re.compile(r"Camera_(\d+)_(.+)")
+
+
+def _safe_name(text: str) -> str:
+    """Folder-name-safe text (model / serial): letters, digits, '.', '-' and '_' only."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-") or "camera"
+
+
+def _unique_stem(folder: Path, stem: str) -> str:
+    """``stem``, or ``stem_2``, ``stem_3`` ... when a recording with that name already exists."""
+    candidate, n = stem, 2
+    while any(folder.glob(f"{candidate}.*")):
+        candidate, n = f"{stem}_{n}", n + 1
+    return candidate
 _CONTAINER = {
     RecordingMode.VIDEO: "mp4",
     RecordingMode.AVI: "avi",
@@ -51,6 +74,7 @@ class RecordingStatus:
     cameras: dict[str, RecorderStats] = field(default_factory=dict)
     free_bytes: int | None = None
     error: str | None = None  # last problem (e.g. stopped for low disk space)
+    files: dict[str, Path] = field(default_factory=dict)  # camera id -> its recording file
 
     @property
     def frames_written(self) -> int:
@@ -70,9 +94,10 @@ class CameraRecording:
     """Recording state of one camera, for its row in the camera list."""
 
     mode: RecordingMode
-    directory: Path
+    directory: Path  # the camera's folder
     elapsed_s: float
     stats: RecorderStats
+    file: Path | None = None  # the recording file
 
 
 @dataclass
@@ -81,10 +106,11 @@ class _Session:
     directory: Path
     started: float
     recorders: dict[str, CameraRecorder]
-    camera_dirs: dict[str, str]
+    camera_dirs: dict[str, str]  # camera id -> its folder name in the day folder
     metadata: dict[str, dict]
     final_stats: dict[str, RecorderStats] = field(default_factory=dict)  # cameras already stopped
-    save_metadata: bool = False  # frames.csv for video + session.json (setting at start time)
+    save_metadata: bool = False  # .csv for video + .json info files (setting at start time)
+    files: dict[str, Path] = field(default_factory=dict)  # camera id -> recording file
 
     @property
     def active_cameras(self) -> list[str]:
@@ -104,8 +130,7 @@ class RecordingService:
         """Apply recording/snapshot settings. Takes effect for the next recording."""
         rec_cfg = config["recording"]
         with self._lock:
-            self._base_dir = Path(rec_cfg["directory"])
-            self._snapshot_dir = Path(config["snapshots"]["directory"])
+            self._base_dir = Path(rec_cfg["directory"])  # recordings and images (one save folder)
             self._queue_frames = int(rec_cfg["queue_frames"])
             self._min_free_bytes = int(float(rec_cfg["min_free_gb"]) * 1e9)
             self.default_mode = RecordingMode(rec_cfg["mode"])
@@ -128,7 +153,8 @@ class RecordingService:
             if session is None:
                 return None
             return CameraRecording(session.mode, session.directory / session.camera_dirs[camera_id],
-                                   time.time() - session.started, session.recorders[camera_id].stats())
+                                   time.time() - session.started, session.recorders[camera_id].stats(),
+                                   session.files.get(camera_id))
 
     def start(self, mode: RecordingMode | None = None, camera_ids: list[str] | None = None,
               timestamp_overlay: bool | None = None) -> Path:
@@ -137,7 +163,8 @@ class RecordingService:
         ``timestamp_overlay``: burn the real-time timestamp into video frames (default: the
         ``recording.timestamp_overlay`` setting). Ignored for raw, which is never altered.
 
-        Returns the session directory. Other cameras' recordings are not affected.
+        Returns the day folder (each camera records into its own folder in it). Other cameras'
+        recordings are not affected.
         """
         mode = mode or self.default_mode
         with self._lock:
@@ -161,31 +188,35 @@ class RecordingService:
 
             started = time.time()
             stamp = self.timestamp_overlay if timestamp_overlay is None else bool(timestamp_overlay)
-            directory = self._new_session_dir(started)
+            directory = self.day_folder(started)
             recorders: dict[str, CameraRecorder] = {}
             camera_dirs: dict[str, str] = {}
             metadata: dict[str, dict] = {}
-            for index, camera_id in enumerate(camera_ids, start=1):
+            files: dict[str, Path] = {}
+            for camera_id in camera_ids:
                 camera = self._manager.camera(camera_id)
-                camera_dir = f"Camera_{index:02d}"
+                folder = self.camera_folder(camera_id, started)
+                stem = _unique_stem(folder, time.strftime("Recording_%Y%m%d_%H%M%S", time.localtime(started)))
                 metadata[camera_id] = camera_metadata(camera)
                 if mode is not RecordingMode.RAW:
                     metadata[camera_id]["timestamp_overlay"] = stamp
                 writer = (
-                    RawSequenceWriter(directory / camera_dir)
+                    RawSequenceWriter(folder, stem=stem)
                     if mode is RecordingMode.RAW
-                    else VideoFileWriter(directory / camera_dir, fps=camera.frame_rate or 30.0, container=_CONTAINER[mode],
-                                         index=self._save_metadata, stamp=stamp)
+                    else VideoFileWriter(folder, fps=camera.frame_rate or 30.0, container=_CONTAINER[mode],
+                                         index=self._save_metadata, stamp=stamp, stem=stem)
                 )
                 recorder = CameraRecorder(camera_id, writer, RecordingQueue(self._queue_frames))
                 recorder.start()
                 recorders[camera_id] = recorder
-                camera_dirs[camera_id] = camera_dir
+                camera_dirs[camera_id] = folder.name
+                files[camera_id] = writer.path
             session = _Session(mode, directory, started, recorders, camera_dirs, metadata,
-                               save_metadata=self._save_metadata)
+                               save_metadata=self._save_metadata, files=files)
             self._sessions.append(session)
             self._last_error = None
-            self._write_session_json(session)
+            for camera_id in camera_ids:
+                self._write_info(session, camera_id)
             # Attach queues last so recorders are ready before frames arrive.
             for camera_id, recorder in recorders.items():
                 self._manager.set_recording_queue(camera_id, recorder.queue)
@@ -195,12 +226,13 @@ class RecordingService:
     def stop(self, camera_ids: list[str] | None = None) -> RecordingStatus:
         """Stop recording ``camera_ids`` (default: every recording camera).
 
-        Detaches queues, flushes what is already queued, and updates session.json (finalised when the
-        session's last camera stops). Returns totals for the cameras that were stopped.
+        Detaches queues, flushes what is already queued, and finalises each camera's info file.
+        Returns totals (and the recording files) for the cameras that were stopped.
         """
         with self._lock:
             targets = set(camera_ids) if camera_ids is not None else None
             stopped: dict[str, RecorderStats] = {}
+            files: dict[str, Path] = {}
             last_dir: Path | None = None
             mode: RecordingMode | None = None
             for session in list(self._sessions):
@@ -215,19 +247,21 @@ class RecordingService:
                 for camera_id in to_stop:
                     session.final_stats[camera_id] = session.recorders[camera_id].stop()
                     stopped[camera_id] = session.final_stats[camera_id]
+                    files[camera_id] = session.files[camera_id]
+                    self._write_info(session, camera_id, stopped=time.time())
                 finished = not session.active_cameras
-                self._write_session_json(session, stopped=time.time() if finished else None)
                 if finished:
                     self._sessions.remove(session)
                 last_dir, mode = session.directory, session.mode
                 totals = RecordingStatus(active=False, cameras={c: stopped[c] for c in to_stop})
                 logger.info(  # tagged with the camera when only one stopped
                     "Recording stopped for %s: %d frames, %.2f GB, %d dropped -> %s",
-                    ", ".join(to_stop), totals.frames_written, totals.bytes_written / 1e9, totals.dropped, session.directory,
+                    ", ".join(to_stop), totals.frames_written, totals.bytes_written / 1e9, totals.dropped,
+                    ", ".join(str(session.files[c]) for c in to_stop),
                     extra=for_camera(to_stop[0] if len(to_stop) == 1 else "-"),
                 )
             return RecordingStatus(active=self.active, mode=mode, session_dir=last_dir, cameras=stopped,
-                                   free_bytes=self._free_bytes, error=self._last_error)
+                                   free_bytes=self._free_bytes, error=self._last_error, files=files)
 
     def status(self) -> RecordingStatus:
         """Aggregate over active sessions. Cheap enough per UI frame; enforces the free-space limit."""
@@ -258,15 +292,31 @@ class RecordingService:
         with self._lock:
             return next((s for s in self._sessions if camera_id in s.active_cameras), None)
 
-    def _new_session_dir(self, started: float) -> Path:
-        local = time.localtime(started)
-        parent = self._base_dir / time.strftime("%Y-%m-%d", local)
-        name = time.strftime("Session_%Y%m%d_%H%M%S", local)
-        directory, n = parent / name, 2
-        while directory.exists():  # two cameras started within the same second
-            directory, n = parent / f"{name}_{n}", n + 1
-        directory.mkdir(parents=True)
-        return directory
+    def day_folder(self, when: float | None = None) -> Path:
+        """<save folder>/YYYY-MM-DD for ``when`` (default now)."""
+        return self._base_dir / time.strftime("%Y-%m-%d", time.localtime(time.time() if when is None else when))
+
+    def camera_folder(self, camera_id: str, when: float | None = None) -> Path:
+        """The camera's folder in the day folder, created on first use: Camera_NN_<model>_<serial>.
+
+        A camera keeps its number for the whole day (found again by model + serial); a camera seen
+        for the first time that day gets the next number."""
+        camera = self._manager.camera(camera_id)
+        identity = f"{_safe_name(camera.model)}_{_safe_name(camera.serial_number)}"
+        day = self.day_folder(when)
+        with self._lock:
+            numbers = []
+            if day.exists():
+                for entry in day.iterdir():
+                    match = _CAMERA_FOLDER.fullmatch(entry.name)
+                    if not match or not entry.is_dir():
+                        continue
+                    if match.group(2) == identity:
+                        return entry
+                    numbers.append(int(match.group(1)))
+            folder = day / f"Camera_{max(numbers, default=0) + 1:02d}_{identity}"
+            folder.mkdir(parents=True, exist_ok=True)
+            return folder
 
     def _check_disk(self, force: bool = False) -> int | None:
         now = time.monotonic()
@@ -280,39 +330,33 @@ class RecordingService:
                 self._free_bytes = None
         return self._free_bytes
 
-    def _write_session_json(self, session: _Session, stopped: float | None = None) -> None:
+    def _write_info(self, session: _Session, camera_id: str, stopped: float | None = None) -> None:
+        """<recording>.json next to the camera's recording (only with recording.save_metadata)."""
         if not session.save_metadata:
             return
-        cameras = []
-        for camera_id, recorder in session.recorders.items():
-            stats = session.final_stats.get(camera_id) or recorder.stats()
-            cameras.append({
-                "directory": session.camera_dirs[camera_id],
-                **session.metadata[camera_id],
-                "recording": {
-                    "frames_written": stats.frames_written,
-                    "bytes_written": stats.bytes_written,
-                    "frame_gaps": stats.frame_gaps,
-                    "queue_overflows": stats.queue_overflows,
-                    "error": stats.error,
-                    "stopped": camera_id in session.final_stats,
-                },
-            })
+        file = session.files[camera_id]
+        stats = session.final_stats.get(camera_id) or session.recorders[camera_id].stats()
         if session.mode is RecordingMode.RAW:
-            description = "raw frame sequence (frames.raw + frames.csv)"
+            description = f"raw frame sequence ({file.stem}.raw + {file.stem}.csv)"
         else:
-            description = f"{session.mode.label} video, half resolution, + frames.csv"
+            description = f"{session.mode.label} video, half resolution, + {file.stem}.csv"
         document = {
             "application": {"name": APP_NAME, "version": __version__},
-            "session": {
+            "recording": {
+                "file": file.name,
                 "mode": session.mode.value,
                 "format": description,
                 "started": _iso(session.started),
                 "stopped": _iso(stopped) if stopped else None,
+                "frames_written": stats.frames_written,
+                "bytes_written": stats.bytes_written,
+                "frame_gaps": stats.frame_gaps,
+                "queue_overflows": stats.queue_overflows,
+                "error": stats.error,
             },
-            "cameras": cameras,
+            "camera": session.metadata[camera_id],
         }
-        (session.directory / "session.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        file.with_suffix(".json").write_text(json.dumps(document, indent=2), encoding="utf-8")
 
     # --- snapshots ------------------------------------------------------------
     def snapshot(self, camera_ids: list[str] | None = None, image_format: str = "png") -> list[SnapshotFiles]:
@@ -321,15 +365,17 @@ class RecordingService:
             raise RecordingError(f"Unsupported image format {image_format!r}; choose from {list(IMAGE_FORMATS)}")
         if camera_ids is None:
             camera_ids = [c for c in self._manager.camera_ids if self._manager.state(c) is CameraState.ACQUIRING]
-        directory = self._snapshot_dir / time.strftime("%Y-%m-%d")
         saved = []
         for camera_id in camera_ids:
             frame = self._manager.snapshot_frame(camera_id)
             if frame is None:
                 continue
+            camera = self._manager.camera(camera_id)
+            directory = self.camera_folder(camera_id, frame.timestamp) / IMAGES_FOLDER
             metadata = {"application": {"name": APP_NAME, "version": __version__},
-                        "camera": camera_metadata(self._manager.camera(camera_id))}
-            files = save_snapshot(frame, directory, metadata, image_format)
+                        "camera": camera_metadata(camera)}
+            files = save_snapshot(frame, directory, metadata, image_format,
+                                  name=f"{_safe_name(camera.model)}_{_safe_name(camera.serial_number)}")
             logger.info("Snapshot %s (%s) -> %s", camera_id, image_format.upper(), files.processed or files.raw, extra=for_camera(camera_id))
             saved.append(files)
         if not saved:

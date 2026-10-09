@@ -135,7 +135,8 @@ def test_snapshot_16bit_raw_is_lossless(tmp_path):
 def service(tmp_path):
     manager = CameraManager(frame_timeout=0.1)
     for i in (1, 2):
-        manager.add_camera(SimulatorCamera(SimulatorConfig(camera_id=f"SIM-{i}", width=160, height=120, fps=60)))
+        manager.add_camera(SimulatorCamera(SimulatorConfig(camera_id=f"SIM-{i}", serial_number=f"SN{i}",
+                                                           width=160, height=120, fps=60)))
     config = {
         **DEFAULT_CONFIG,
         "recording": {**DEFAULT_CONFIG["recording"], "directory": str(tmp_path / "rec"), "min_free_gb": 0,
@@ -161,26 +162,56 @@ def test_start_requires_streaming_camera(service):
         svc.start()
 
 
-def test_raw_session_layout_and_contents(service):
+def test_day_and_camera_folder_layout(service):
+    """<save>/YYYY-MM-DD/Camera_NN_<model>_<serial>/Recording_<time>.raw/.csv(/.json)."""
     manager, svc = service
     stream_all(manager)
-    session_dir = svc.start(RecordingMode.RAW)
+    day = svc.start(RecordingMode.RAW)
     assert svc.is_recording("SIM-1") and svc.status().active
     assert wait_until(lambda: svc.status().frames_written >= 20)
     status = svc.stop()
 
-    assert session_dir.name.startswith("Session_") and session_dir.parent.name.count("-") == 2
-    doc = json.loads((session_dir / "session.json").read_text())
-    assert doc["session"]["mode"] == "raw" and doc["session"]["stopped"]
-    assert [c["directory"] for c in doc["cameras"]] == ["Camera_01", "Camera_02"]
-    assert doc["cameras"][0]["model"] == "Simulator" and doc["cameras"][0]["pixel_format"] == "Mono8"
-    for cam in doc["cameras"]:
-        frames = list(read_raw_sequence(session_dir / cam["directory"]))
-        assert len(frames) == cam["recording"]["frames_written"] > 0
+    assert day.parent == svc._base_dir and day.name.count("-") == 2
+    assert sorted(p.name for p in day.iterdir()) == ["Camera_01_Simulator_SN1", "Camera_02_Simulator_SN2"]
+    for camera_id, file in status.files.items():
+        assert file.parent.name.endswith(camera_id.replace("SIM-", "SN")) and file.name.startswith("Recording_")
+        assert file.suffix == ".raw" and file.with_suffix(".csv").exists()
+        doc = json.loads(file.with_suffix(".json").read_text())
+        assert doc["recording"]["mode"] == "raw" and doc["recording"]["stopped"]
+        assert doc["camera"]["model"] == "Simulator" and doc["camera"]["pixel_format"] == "Mono8"
+        frames = list(read_raw_sequence(file))
+        assert len(frames) == doc["recording"]["frames_written"] > 0
         ids = [f.frame_id for f in frames]
         assert ids == list(range(ids[0], ids[0] + len(ids)))  # nothing lost between camera and disk
     assert status.dropped == 0
     assert not svc.active
+
+
+def test_cameras_share_the_day_folder_and_keep_their_numbers(service):
+    manager, svc = service
+    stream_all(manager)
+    svc.start(RecordingMode.VIDEO, ["SIM-2"])  # SIM-2 records first today: Camera_01
+    svc.start(RecordingMode.VIDEO, ["SIM-1"])  # joins the same day folder: Camera_02
+    assert wait_until(lambda: svc.status().frames_written >= 6)
+    first = svc.stop().files
+    assert first["SIM-2"].parent.name == "Camera_01_Simulator_SN2"
+    assert first["SIM-1"].parent.name == "Camera_02_Simulator_SN1"
+    assert first["SIM-1"].parent.parent == first["SIM-2"].parent.parent
+    svc.start(RecordingMode.VIDEO, ["SIM-1"])  # a later recording: same folder, its own file
+    assert wait_until(lambda: svc.status().frames_written >= 3)
+    second = svc.stop().files["SIM-1"]
+    assert second.parent == first["SIM-1"].parent and second != first["SIM-1"]
+
+
+def test_images_go_into_the_camera_folder(service):
+    manager, svc = service
+    stream_all(manager)
+    svc.start(RecordingMode.VIDEO, ["SIM-1"])
+    files = svc.snapshot(["SIM-1"], "png")
+    svc.stop()
+    camera_dir = svc.camera_folder("SIM-1")
+    assert files[0].processed.parent == camera_dir / "Images"
+    assert files[0].processed.name.startswith("Simulator_SN1_")
 
 
 def test_recording_survives_stream_restart(service):
@@ -188,14 +219,15 @@ def test_recording_survives_stream_restart(service):
 
     manager, svc = service
     stream_all(manager)
-    session_dir = svc.start(RecordingMode.RAW, ["SIM-1"])
+    svc.start(RecordingMode.RAW, ["SIM-1"])
+    file = svc.camera_recording("SIM-1").file
     assert wait_until(lambda: svc.status().frames_written >= 5)
     CameraControlService(manager).set_pixel_format("SIM-1", "RGB8")  # pauses + resumes the stream
     assert wait_until(lambda: any(
-        f.pixel_format == "RGB8" for f in read_raw_sequence_safe(session_dir / "Camera_01")
+        f.pixel_format == "RGB8" for f in read_raw_sequence_safe(file)
     ) or svc.status().cameras["SIM-1"].frames_written > 40)
     svc.stop()
-    formats = {f.pixel_format for f in read_raw_sequence(session_dir / "Camera_01")}
+    formats = {f.pixel_format for f in read_raw_sequence(file)}
     assert formats == {"Mono8", "RGB8"}
 
 
@@ -209,39 +241,37 @@ def read_raw_sequence_safe(directory):
 def test_video_session(service):
     manager, svc = service
     stream_all(manager)
-    session_dir = svc.start(RecordingMode.VIDEO, ["SIM-2"])
+    svc.start(RecordingMode.VIDEO, ["SIM-2"])
     assert wait_until(lambda: svc.status().frames_written >= 10)
-    svc.stop()
-    capture = cv2.VideoCapture(str(session_dir / "Camera_01" / "video.mp4"))
+    file = svc.stop().files["SIM-2"]
+    assert file.suffix == ".mp4"
+    capture = cv2.VideoCapture(str(file))
     assert capture.isOpened() and int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) >= 10
     capture.release()
 
 
 def test_video_session_without_metadata_is_just_the_video(service):
-    """Default (save_metadata off): video.mp4 only, and the size shown is the real file size."""
+    """Default (save_metadata off): just the video, and the size shown is the real file size."""
     manager, svc = service
     svc._save_metadata = False
     stream_all(manager)
-    session_dir = svc.start(RecordingMode.VIDEO, ["SIM-2"])
+    svc.start(RecordingMode.VIDEO, ["SIM-2"])
     assert wait_until(lambda: svc.status().frames_written >= 10)
-    stats = svc.stop().cameras["SIM-2"]
-    camera_dir = session_dir / "Camera_01"
-    assert sorted(p.name for p in camera_dir.iterdir()) == ["video.mp4"]
-    assert not (session_dir / "session.json").exists()
-    assert stats.bytes_written == (camera_dir / "video.mp4").stat().st_size
+    status = svc.stop()
+    stats, file = status.cameras["SIM-2"], status.files["SIM-2"]
+    assert [p.name for p in file.parent.iterdir()] == [file.name]
+    assert stats.bytes_written == file.stat().st_size
 
 
 def test_raw_without_metadata_keeps_its_index(service):
     manager, svc = service
     svc._save_metadata = False
     stream_all(manager)
-    session_dir = svc.start(RecordingMode.RAW, ["SIM-1"])
+    svc.start(RecordingMode.RAW, ["SIM-1"])
     assert wait_until(lambda: svc.status().frames_written >= 5)
-    svc.stop()
-    camera_dir = session_dir / "Camera_01"
-    assert sorted(p.name for p in camera_dir.iterdir()) == ["frames.csv", "frames.raw"]  # csv is the index
-    assert not (session_dir / "session.json").exists()
-    assert len(list(read_raw_sequence(camera_dir))) >= 5
+    file = svc.stop().files["SIM-1"]
+    assert sorted(p.suffix for p in file.parent.iterdir()) == [".csv", ".raw"]  # the csv is the index
+    assert len(list(read_raw_sequence(file))) >= 5
 
 
 def test_metadata_setting_comes_from_config(service):
@@ -283,20 +313,22 @@ def test_snapshot_all_streaming(service, tmp_path):
 def test_cameras_record_independently(service):
     manager, svc = service
     stream_all(manager)
-    dir_a = svc.start(RecordingMode.RAW, ["SIM-1"])
+    svc.start(RecordingMode.RAW, ["SIM-1"])
+    file_a = svc.camera_recording("SIM-1").file
     assert svc.is_recording("SIM-1") and not svc.is_recording("SIM-2")
     with pytest.raises(RecordingError, match="Already recording"):
         svc.start(RecordingMode.RAW, ["SIM-1"])
-    dir_b = svc.start(RecordingMode.VIDEO, ["SIM-2"])
-    assert dir_b != dir_a and svc.is_recording("SIM-2")
+    svc.start(RecordingMode.VIDEO, ["SIM-2"])
+    file_b = svc.camera_recording("SIM-2").file
+    assert file_b.parent != file_a.parent and svc.is_recording("SIM-2")
     assert svc.camera_recording("SIM-2").mode is RecordingMode.VIDEO
     assert wait_until(lambda: svc.camera_recording("SIM-1").stats.frames_written >= 5)
 
     stopped = svc.stop(["SIM-1"])  # stopping A must not touch B
     assert list(stopped.cameras) == ["SIM-1"] and stopped.cameras["SIM-1"].frames_written >= 5
     assert not svc.is_recording("SIM-1") and svc.is_recording("SIM-2") and svc.active
-    assert json.loads((dir_a / "session.json").read_text())["session"]["stopped"]
-    assert json.loads((dir_b / "session.json").read_text())["session"]["stopped"] is None
+    assert json.loads(file_a.with_suffix(".json").read_text())["recording"]["stopped"]
+    assert json.loads(file_b.with_suffix(".json").read_text())["recording"]["stopped"] is None
     svc.stop()
     assert not svc.active
 
@@ -304,14 +336,14 @@ def test_cameras_record_independently(service):
 def test_stop_one_camera_of_a_shared_session(service):
     manager, svc = service
     stream_all(manager)
-    session_dir = svc.start(RecordingMode.RAW)  # toolbar: all streaming cameras
+    svc.start(RecordingMode.RAW)  # all streaming cameras
+    files = {cid: svc.camera_recording(cid).file for cid in ("SIM-1", "SIM-2")}
     assert svc.is_recording("SIM-1") and svc.is_recording("SIM-2")
     svc.stop(["SIM-2"])
-    doc = json.loads((session_dir / "session.json").read_text())
-    assert doc["session"]["stopped"] is None  # SIM-1 still recording
-    assert [c["recording"]["stopped"] for c in doc["cameras"]] == [False, True]
+    info = {cid: json.loads(f.with_suffix(".json").read_text()) for cid, f in files.items()}
+    assert info["SIM-2"]["recording"]["stopped"] and info["SIM-1"]["recording"]["stopped"] is None
     svc.stop(["SIM-1"])
-    assert json.loads((session_dir / "session.json").read_text())["session"]["stopped"]
+    assert json.loads(files["SIM-1"].with_suffix(".json").read_text())["recording"]["stopped"]
 
 
 def test_toolbar_start_skips_cameras_already_recording(service):
@@ -336,10 +368,11 @@ def test_cannot_record_a_stopped_camera(service):
 def test_video_containers(service, mode, extension):
     manager, svc = service
     stream_all(manager)
-    session_dir = svc.start(mode, ["SIM-1"])
+    svc.start(mode, ["SIM-1"])
     assert wait_until(lambda: svc.status().frames_written >= 8)
-    svc.stop()
-    capture = cv2.VideoCapture(str(session_dir / "Camera_01" / f"video.{extension}"))
+    file = svc.stop().files["SIM-1"]
+    assert file.suffix == f".{extension}"
+    capture = cv2.VideoCapture(str(file))
     assert capture.isOpened() and int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) >= 8
     capture.release()
 
@@ -358,6 +391,7 @@ def test_snapshot_one_camera_only(service):
     manager, svc = service
     stream_all(manager)
     files = svc.snapshot(["SIM-2"], "jpeg")
-    assert len(files) == 1 and files[0].processed.name.startswith("SIM-2") and files[0].processed.suffix == ".jpg"
+    assert len(files) == 1 and files[0].processed.name.startswith("Simulator_SN2_")
+    assert files[0].processed.suffix == ".jpg"
     with pytest.raises(RecordingError, match="Unsupported image format"):
         svc.snapshot(["SIM-2"], "gif")

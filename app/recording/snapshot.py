@@ -35,13 +35,15 @@ class SnapshotFiles:
     metadata: Path
 
 
-def save_snapshot(frame: Frame, directory: Path, metadata: dict, image_format: str = "png") -> SnapshotFiles:
+def save_snapshot(frame: Frame, directory: Path, metadata: dict, image_format: str = "png",
+                  name: str | None = None) -> SnapshotFiles:
+    """``name``: file-name prefix (default: the camera id), e.g. "TRI122S-C_262503318"."""
     extension = IMAGE_FORMATS[image_format][0]
     raw_extension = "tif" if image_format == "tiff" else "png"
     directory.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(frame.timestamp))
     millis = int((frame.timestamp % 1) * 1000)
-    stem = f"{_safe(frame.camera_id)}_{stamp}_{millis:03d}_f{frame.frame_id}"
+    stem = f"{_safe(name or frame.camera_id)}_{stamp}_{millis:03d}_f{frame.frame_id}"
 
     raw_path = directory / f"{stem}_raw.{raw_extension}"
     raw = frame.data
