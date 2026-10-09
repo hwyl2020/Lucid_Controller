@@ -114,9 +114,11 @@ def test_video_writer_rejects_size_change(tmp_path):
 
 
 # --- snapshot -----------------------------------------------------------------
-def test_snapshot_bayer_writes_raw_processed_and_metadata(tmp_path):
+def test_raw_capture_saves_everything(tmp_path):
+    """Raw: lossless camera data + viewable PNG + JSON sidecar."""
     raw = np.random.default_rng(1).integers(0, 256, (32, 48), dtype=np.uint8)
-    files = save_snapshot(frame(9, raw, "BayerRG8"), tmp_path, {"camera": {"model": "X"}})
+    files = save_snapshot(frame(9, raw, "BayerRG8"), tmp_path, {"camera": {"model": "X"}}, "raw")
+    assert sorted(p.suffix for p in tmp_path.iterdir()) == [".json", ".png", ".png"]
     np.testing.assert_array_equal(cv2.imread(str(files.raw), cv2.IMREAD_UNCHANGED), raw)
     assert cv2.imread(str(files.processed)).shape == (32, 48, 3)
     meta = json.loads(files.metadata.read_text())
@@ -126,7 +128,7 @@ def test_snapshot_bayer_writes_raw_processed_and_metadata(tmp_path):
 
 def test_snapshot_16bit_raw_is_lossless(tmp_path):
     raw = np.array([[0, 4095], [1234, 65535]], np.uint16)
-    files = save_snapshot(frame(1, raw, "Mono16"), tmp_path, {})
+    files = save_snapshot(frame(1, raw, "Mono16"), tmp_path, {}, "raw")
     np.testing.assert_array_equal(cv2.imread(str(files.raw), cv2.IMREAD_UNCHANGED), raw)
 
 
@@ -302,7 +304,7 @@ def test_stops_when_disk_runs_low(service, monkeypatch):
 def test_snapshot_all_streaming(service, tmp_path):
     manager, svc = service
     stream_all(manager)
-    files = svc.snapshot()
+    files = svc.snapshot(image_format="raw")
     assert len(files) == 2
     meta = json.loads(files[0].metadata.read_text())
     assert meta["camera"]["camera_id"] == "SIM-1" and meta["application"]["version"]
@@ -377,14 +379,13 @@ def test_video_containers(service, mode, extension):
     capture.release()
 
 
-@pytest.mark.parametrize("image_format,extension,raw_extension", [
-    ("png", "png", "png"), ("jpeg", "jpg", "png"), ("bmp", "bmp", "png"), ("tiff", "tif", "tif")])
-def test_snapshot_formats(tmp_path, image_format, extension, raw_extension):
+@pytest.mark.parametrize("image_format,extension", [("png", "png"), ("jpeg", "jpg"), ("bmp", "bmp"), ("tiff", "tif")])
+def test_image_formats_save_only_the_image(tmp_path, image_format, extension):
     raw = np.array([[0, 4095], [1234, 65535]], np.uint16)
     files = save_snapshot(frame(1, raw, "Mono16"), tmp_path, {}, image_format)
     assert files.processed.suffix == f".{extension}" and cv2.imread(str(files.processed)) is not None
-    assert files.raw.suffix == f".{raw_extension}"
-    np.testing.assert_array_equal(cv2.imread(str(files.raw), cv2.IMREAD_UNCHANGED), raw)  # raw stays lossless
+    assert files.raw is None and files.metadata is None
+    assert [p.name for p in tmp_path.iterdir()] == [files.processed.name]
 
 
 def test_snapshot_one_camera_only(service):

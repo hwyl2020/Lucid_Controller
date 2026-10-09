@@ -145,7 +145,10 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Choosing a mode:** measured on this PC, disk writes reach about 1 GB/s against about 110 MB/s needed. mp4v encoding takes 92 ms per 12 MP frame (too slow for 9 FPS) or 22 ms at half resolution. Hence:
   - **Raw** (default): lossless, native format (raw Bayer). `frames.raw` holds the data and `frames.csv` the index (offset, size, dtype, shape, id, timestamp). Read it back with `recorder.read_raw_sequence()`.
   - **Video:** half-resolution MP4 (mp4v) plus `frames.csv`. It fails with a clear error if the frame size changes mid-recording.
-- **Snapshots** (`snapshot.py`) save a lossless raw PNG (16-bit for >8-bit formats), a full-resolution demosaiced RGB PNG, and a JSON sidecar. The source is `CameraManager.snapshot_frame()` (the worker's `last_frame`, which doesn't consume the display queue).
+- **Image capture** (`snapshot.py`; formats Raw / PNG / JPEG / BMP / TIFF):
+  - **Raw** saves everything: the lossless camera data `_raw.png` (16-bit for >8-bit formats), a full-resolution demosaiced RGB PNG, and a JSON sidecar.
+  - **The other formats** save only the RGB image, as requested. If a frame can't be converted to RGB, the lossless raw copy is saved instead.
+  - The source is `CameraManager.snapshot_frame()` (the worker's `last_frame`, which doesn't consume the display queue).
 - **Bayer naming:** OpenCV demosaic codes are swapped relative to GenICam: GenICam RG = OpenCV BG, and GR = GB. `processing._CV_DEMOSAIC` holds the mapping, verified against the SDK in `test_arena_sdk_buffers.py`.
 - **Verified on the TRI122S-C:** a 6 s raw recording gave 58 × 12 MP BayerRG8 frames, 0 gaps and 0 overflows. Snapshot colours were correct.
 
@@ -264,9 +267,7 @@ Since 0.2.0 it follows the user's light and dark reference images; the previous 
   - Raw, MP4 (mp4v), AVI (MJPG), MOV (mp4v) and MKV (XVID), each verified to write and read back with the bundled OpenCV/FFmpeg.
   - Each encodes 2012×1518 at 45–64 FPS on the dev PC.
   - Only verified formats are offered (`RecordingMode`, `video_writer.CONTAINERS`).
-- **Image formats:**
-  - PNG, JPEG, BMP and TIFF apply to the processed image.
-  - The raw copy is always lossless: PNG, or TIFF when TIFF is chosen. BMP can't hold 16-bit and JPEG is lossy.
+- **Image formats:** Raw (lossless data + PNG + JSON) or PNG / JPEG / BMP / TIFF (image only).
 - **Feature model:**
   - `models/features.py` defines `Feature` / `FeatureCategory`.
   - `CameraDevice.feature_tree / write_feature / execute_feature` are optional (the defaults mean unsupported).
