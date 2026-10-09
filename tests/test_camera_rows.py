@@ -141,8 +141,10 @@ def test_independent_recording_and_capture(sidebar):
 
     dpg.set_value(bar.rows["B"].image_format, "TIFF")
     bar.rows["B"].capture()
-    files = sorted(p.name for p in (tmp_path / "snap").rglob("*.*"))
-    assert files and all(name.startswith("B_") for name in files)
+    images = [p for p in (tmp_path / "rec").rglob("*.*") if p.parent.name == "Images"]
+    files = sorted(p.name for p in images)
+    assert files and all(name.startswith("Simulator_SN-B_") for name in files)
+    assert {p.parent.parent.name for p in images} == {recording.camera_folder("B").name}
     assert any(name.endswith(".tif") for name in files)
 
     bar.rows["C"].toggle_recording()  # C is not streaming

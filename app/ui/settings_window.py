@@ -42,7 +42,8 @@ class SettingsWindow:
                 self._accent = self._row("Accent colour", lambda: dpg.add_combo(list(ACCENT_CHOICES), width=FIELD_WIDTH))
                 self._layout = self._row("Default layout", lambda: dpg.add_combo(list(LAYOUTS), width=FIELD_WIDTH))
             with self._section("Recording"):
-                self._rec_dir = self._row("Recordings folder", lambda: self._folder_field("Recordings folder"))
+                # One save folder: <folder>/<date>/Camera_NN_<model>_<serial>/ recordings + Images/
+                self._rec_dir = self._row("Save folder", lambda: self._folder_field("folder for recordings and images"))
                 self._rec_mode = self._row("Default mode", lambda: dpg.add_combo([m.value for m in RecordingMode],
                                                                                   width=FIELD_WIDTH))
                 self._queue = self._row("Queue (frames/camera)", lambda: dpg.add_input_int(
@@ -51,7 +52,6 @@ class SettingsWindow:
                     label="Save timestamps and session info"))
                 self._min_free = self._row("Stop below free GB", lambda: dpg.add_input_float(
                     width=FIELD_WIDTH, min_value=0, min_clamped=True, format="%.1f"))
-                self._snap_dir = self._row("Images folder", lambda: self._folder_field("Images (capture) folder"))
             with self._section("Cameras & logging"):
                 self._reconnect = self._row("Auto-reconnect", lambda: dpg.add_checkbox(label="Reconnect lost cameras"))
                 self._log_level = self._row("Log level", lambda: dpg.add_combo(LOG_LEVELS, width=FIELD_WIDTH))
@@ -114,7 +114,6 @@ class SettingsWindow:
         dpg.set_value(self._queue, int(cfg["recording"]["queue_frames"]))
         dpg.set_value(self._min_free, float(cfg["recording"]["min_free_gb"]))
         dpg.set_value(self._metadata, bool(cfg["recording"].get("save_metadata", False)))
-        dpg.set_value(self._snap_dir, str(Path(cfg["snapshots"]["directory"]).resolve()))
         dpg.set_value(self._reconnect, bool(cfg["reconnect"]["enabled"]))
         dpg.set_value(self._log_level, cfg["logging"]["level"])
         dpg.set_value(self._message, "")
@@ -132,7 +131,6 @@ class SettingsWindow:
         new["recording"]["queue_frames"] = max(4, int(dpg.get_value(self._queue)))
         new["recording"]["min_free_gb"] = max(0.0, float(dpg.get_value(self._min_free)))
         new["recording"]["save_metadata"] = bool(dpg.get_value(self._metadata))
-        new["snapshots"]["directory"] = dpg.get_value(self._snap_dir).strip() or "snapshots"
         new["reconnect"]["enabled"] = bool(dpg.get_value(self._reconnect))
         new["logging"]["level"] = dpg.get_value(self._log_level)
 

@@ -62,15 +62,18 @@ class VideoFileWriter:
     timestamp into the picture."""
 
     def __init__(self, directory: Path, fps: float, container: str = "mp4", index: bool = True,
-                 stamp: bool = False) -> None:
+                 stamp: bool = False, stem: str | None = None) -> None:
+        """``stem``: file name without extension (default "video"; the index is then frames.csv,
+        else ``<stem>.csv``)."""
         self._stamp = stamp
         directory.mkdir(parents=True, exist_ok=True)
         extension, self._fourcc = CONTAINERS[container]
-        self._path = directory / f"video.{extension}"
+        self._path = directory / f"{stem or 'video'}.{extension}"
         self._fps = max(float(fps), 1.0)
         self._writer: cv2.VideoWriter | None = None
         self._size: tuple[int, int] | None = None
-        self._index_file = open(directory / INDEX_FILE, "w", newline="", encoding="utf-8") if index else None
+        index_path = directory / (f"{stem}.csv" if stem else INDEX_FILE)
+        self._index_file = open(index_path, "w", newline="", encoding="utf-8") if index else None
         self._index = csv.writer(self._index_file) if self._index_file else None
         if self._index:
             self._index.writerow(("video_frame", "frame_id", "timestamp"))

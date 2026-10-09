@@ -121,11 +121,15 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 
 ### Recording and snapshots
 
-- **`RecordingService`** (`app/services/recording_service.py`) is the UI's entry point. It creates `recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_NN/` plus `session.json` (app version, mode, start/stop times, per-camera metadata and frame/drop counts).
+- **`RecordingService`** (`app/services/recording_service.py`) is the UI's entry point.
+- **Folder layout (on request: one folder per day, no session folders):** `<save folder>/YYYY-MM-DD/Camera_NN_<model>_<serial>/` holds `Recording_YYYYMMDD_HHMMSS.<mp4|avi|mov|mkv>` (raw: `.raw` + `.csv`; `_2`, `_3`... on a name clash) and an `Images/` sub-folder for captures.
+  - `camera_folder(id, when)` finds the camera's folder of that day by model and serial, or creates the next number. A camera therefore keeps its number all day, and all cameras share the day folder.
+  - `start()` returns the day folder; `stop()` / `camera_recording()` give the recording file(s).
+  - Images and recordings use **one save folder** (`recording.directory`; Settings ▸ Save folder). `snapshots.directory` is no longer used.
 - **Info files** (`recording.save_metadata`, Settings ▸ "Recording info files", **off by default**):
-  - On: each camera folder also gets `frames.csv` (video frame → camera frame id + timestamp), and the session gets `session.json`.
-  - Off: a video recording is just `video.<ext>`, with no `session.json`.
-  - Raw always writes `frames.csv`, because it is the index needed to read `frames.raw`.
+  - On: each recording also gets `Recording_<time>.csv` (video frame → camera frame id + timestamp) and `Recording_<time>.json` (camera settings, start/stop, counts).
+  - Off: a video recording is just the video file.
+  - Raw always writes its `.csv`, because it is the index needed to read the `.raw` (`read_raw_sequence(path)` accepts the file or stem; old `frames.raw` folders still read).
   - The setting is captured per session at start (`_Session.save_metadata`).
 - **Burned-in timestamp (video only):**
   - `VideoFileWriter(stamp=True)` draws the frame's real-time timestamp (`Frame.timestamp`, local `YYYY-MM-DD HH:MM:SS.mmm`) top-left, white on a darkened box, about 3% of the frame height (`video_writer.draw_timestamp`).
@@ -141,7 +145,10 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Choosing a mode:** measured on this PC, disk writes reach about 1 GB/s against about 110 MB/s needed. mp4v encoding takes 92 ms per 12 MP frame (too slow for 9 FPS) or 22 ms at half resolution. Hence:
   - **Raw** (default): lossless, native format (raw Bayer). `frames.raw` holds the data and `frames.csv` the index (offset, size, dtype, shape, id, timestamp). Read it back with `recorder.read_raw_sequence()`.
   - **Video:** half-resolution MP4 (mp4v) plus `frames.csv`. It fails with a clear error if the frame size changes mid-recording.
-- **Snapshots** (`snapshot.py`) save a lossless raw PNG (16-bit for >8-bit formats), a full-resolution demosaiced RGB PNG, and a JSON sidecar. The source is `CameraManager.snapshot_frame()` (the worker's `last_frame`, which doesn't consume the display queue).
+- **Image capture** (`snapshot.py`; formats Raw / PNG / JPEG / BMP / TIFF):
+  - **Raw** saves everything: the lossless camera data `_raw.png` (16-bit for >8-bit formats), a full-resolution demosaiced RGB PNG, and a JSON sidecar.
+  - **The other formats** save only the RGB image, as requested. If a frame can't be converted to RGB, the lossless raw copy is saved instead.
+  - The source is `CameraManager.snapshot_frame()` (the worker's `last_frame`, which doesn't consume the display queue).
 - **Bayer naming:** OpenCV demosaic codes are swapped relative to GenICam: GenICam RG = OpenCV BG, and GR = GB. `processing._CV_DEMOSAIC` holds the mapping, verified against the SDK in `test_arena_sdk_buffers.py`.
 - **Verified on the TRI122S-C:** a 6 s raw recording gave 58 × 12 MP BayerRG8 frames, 0 gaps and 0 overflows. Snapshot colours were correct.
 
@@ -162,7 +169,7 @@ Camera → AcquisitionWorker (thread per camera) → Frame → ┬→ display qu
 - **Profiles** (`profiles/*.json`) and **sessions** (`sessions/*.json`, gitignored):
   - `SettingsApplier` captures and applies settings in the order format → ROI → exposure → gain → frame rate, through `CameraControlService`, so values are clamped to the target camera.
   - Failures become warnings rather than exceptions.
-- **Settings window** (File ▸ Settings): the recordings and images folders show the full path, plus a **Browse…** button.
+- **Settings window** (File ▸ Settings): the single **Save folder** (recordings and images) shows the full path, plus a **Browse…** button.
   - The button opens the native folder dialog (`ui/folder_picker.py`: tkinter `askdirectory` on its own thread with a hidden topmost root; the result comes back through `poll()` on the UI thread). Streams keep running while it is open.
   - tkinter is therefore not excluded in `installer/visionx.spec`.
   - It edits and saves `config.json`, and applies the theme, log level, auto-reconnect and recording settings live. Recording settings take effect on the next recording.
@@ -260,9 +267,7 @@ Since 0.2.0 it follows the user's light and dark reference images; the previous 
   - Raw, MP4 (mp4v), AVI (MJPG), MOV (mp4v) and MKV (XVID), each verified to write and read back with the bundled OpenCV/FFmpeg.
   - Each encodes 2012×1518 at 45–64 FPS on the dev PC.
   - Only verified formats are offered (`RecordingMode`, `video_writer.CONTAINERS`).
-- **Image formats:**
-  - PNG, JPEG, BMP and TIFF apply to the processed image.
-  - The raw copy is always lossless: PNG, or TIFF when TIFF is chosen. BMP can't hold 16-bit and JPEG is lossy.
+- **Image formats:** Raw (lossless data + PNG + JSON) or PNG / JPEG / BMP / TIFF (image only).
 - **Feature model:**
   - `models/features.py` defines `Feature` / `FeatureCategory`.
   - `CameraDevice.feature_tree / write_feature / execute_feature` are optional (the defaults mean unsupported).
@@ -339,7 +344,7 @@ A missing optional node must hide or disable the control, never crash. Expected 
 
 `app/{ui,cameras,acquisition,recording,services,models,resources}`, plus `tests/`, `profiles/`, `docs/`, `scripts/`. Runtime output goes in `recordings/`, `snapshots/` and `logs/`, which should be gitignored. Once a structure exists, follow it rather than the spec, and don't create placeholder files ahead of need.
 
-Recording output layout: `Recordings/YYYY-MM-DD/Session_YYYYMMDD_HHMMSS/Camera_NN/` plus `session.json`. The JSON holds camera model, serial, IP, resolution, pixel format, FPS, exposure, gain, trigger and app version.
+Recording output layout (since 0.2.2, on request): `<save folder>/YYYY-MM-DD/Camera_NN_<model>_<serial>/Recording_<time>.<ext>` plus `Images/`; see "Recording and snapshots". The optional `Recording_<time>.json` holds camera model, serial, IP, resolution, pixel format, FPS, exposure, gain, trigger and app version.
 
 ## Name and brand
 

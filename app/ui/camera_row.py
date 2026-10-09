@@ -306,7 +306,8 @@ class CameraRow:
                 stats = status.cameras.get(self.camera_id)
                 dropped = (stats.frame_gaps + stats.queue_overflows) if stats else 0
                 self._set_text(self.rec_text, f"Saved {stats.frames_written if stats else 0} frames"
-                               f"{f', {dropped} dropped' if dropped else ''} to {status.session_dir.name}",
+                               f"{f', {dropped} dropped' if dropped else ''} to "
+                               f"{status.files[self.camera_id].name if self.camera_id in status.files else 'disk'}",
                                error=bool(dropped))
             else:
                 mode = VIDEO_FORMATS[dpg.get_value(self.video_format)]
